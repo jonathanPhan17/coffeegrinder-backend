@@ -1,0 +1,9 @@
+import type { FastifyInstance } from 'fastify';
+
+export async function healthRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/health', async () => ({
+    status: 'ok',
+    time: new Date().toISOString(),
+    version: process.env.COMMIT_SHA ?? 'dev',
+  }));
+}
