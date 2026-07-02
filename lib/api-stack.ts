@@ -1,6 +1,6 @@
 import * as path from 'node:path';
-import { CfnOutput, Stack, type StackProps } from 'aws-cdk-lib';
-import { HttpApi } from 'aws-cdk-lib/aws-apigatewayv2';
+import { CfnOutput, Duration, Stack, type StackProps } from 'aws-cdk-lib';
+import { CorsHttpMethod, HttpApi } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import type { TableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { Architecture, Runtime } from 'aws-cdk-lib/aws-lambda';
@@ -16,13 +16,13 @@ export interface ApiStackProps extends StackProps {
 }
 
 // Stateless layer: a single Fastify "lith" Lambda behind the HTTP API's default
-// integration, so Fastify owns route dispatch. CORS, IAM grants and richer
-// outputs are added in feat/api-stack.
+// integration, so Fastify owns route dispatch. Consumes the data layer via
+// explicit props (never globals) and is granted least-privilege access to it.
 export class ApiStack extends Stack {
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
 
-    const fn = new NodejsFunction(this, 'ApiFn', {
+    const fn = new NodejsFunction(this, 'FastifyLith', {
       entry: path.join(__dirname, '..', 'src', 'handler.ts'),
       handler: 'handler',
       runtime: Runtime.NODEJS_20_X,
@@ -37,8 +37,24 @@ export class ApiStack extends Stack {
       },
     });
 
+    props.table.grantReadWriteData(fn);
+    props.bucket.grantReadWrite(fn);
+
     const api = new HttpApi(this, 'HttpApi', {
       defaultIntegration: new HttpLambdaIntegration('Lith', fn),
+      corsPreflight: props.config.allowedOrigins.length
+        ? {
+            allowOrigins: props.config.allowedOrigins,
+            allowMethods: [
+              CorsHttpMethod.GET,
+              CorsHttpMethod.POST,
+              CorsHttpMethod.PATCH,
+              CorsHttpMethod.OPTIONS,
+            ],
+            allowHeaders: ['Content-Type', 'Authorization'],
+            maxAge: Duration.days(1),
+          }
+        : undefined,
     });
 
     new CfnOutput(this, 'ApiUrl', { value: api.apiEndpoint });
