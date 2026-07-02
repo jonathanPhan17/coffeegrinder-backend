@@ -34,6 +34,9 @@ export class ApiStack extends Stack {
       bundling: {
         minify: true,
         sourceMap: true,
+        // Bundle the AWS SDK v3 rather than relying on the Lambda runtime — the
+        // s3-request-presigner is not guaranteed to be runtime-provided.
+        externalModules: [],
       },
     });
 
