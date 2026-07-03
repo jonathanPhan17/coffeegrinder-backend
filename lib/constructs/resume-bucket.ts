@@ -21,6 +21,9 @@ export class ResumeBucket extends Construct {
       blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
       encryption: BucketEncryption.S3_MANAGED,
       enforceSSL: true,
+      // Emit ObjectCreated events to EventBridge so a worker in another stack can
+      // subscribe without a bucket->Lambda reference (which would cycle the stacks).
+      eventBridgeEnabled: true,
       removalPolicy: props.removalPolicy,
       autoDeleteObjects: props.autoDeleteObjects,
       cors: props.allowedOrigins.length
