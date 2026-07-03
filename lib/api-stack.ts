@@ -3,6 +3,8 @@ import { CfnOutput, Duration, Stack, type StackProps } from 'aws-cdk-lib';
 import { CorsHttpMethod, HttpApi } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import type { TableV2 } from 'aws-cdk-lib/aws-dynamodb';
+import { Rule } from 'aws-cdk-lib/aws-events';
+import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
 import { Architecture, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import type { Bucket } from 'aws-cdk-lib/aws-s3';
@@ -61,5 +63,39 @@ export class ApiStack extends Stack {
     });
 
     new CfnOutput(this, 'ApiUrl', { value: api.apiEndpoint });
+
+    // Async worker: parses an uploaded resume when S3 emits ObjectCreated.
+    const parseResume = new NodejsFunction(this, 'ParseResume', {
+      entry: path.join(__dirname, '..', 'src', 'workers', 'parse-resume.ts'),
+      handler: 'handler',
+      runtime: Runtime.NODEJS_20_X,
+      architecture: Architecture.ARM_64,
+      timeout: Duration.seconds(30),
+      memorySize: 512,
+      environment: {
+        TABLE_NAME: props.table.tableName,
+        BUCKET_NAME: props.bucket.bucketName,
+      },
+      bundling: {
+        minify: true,
+        sourceMap: true,
+        externalModules: [],
+      },
+    });
+
+    props.bucket.grantRead(parseResume);
+    props.table.grantWriteData(parseResume);
+
+    new Rule(this, 'ResumeUploadedRule', {
+      eventPattern: {
+        source: ['aws.s3'],
+        detailType: ['Object Created'],
+        detail: {
+          bucket: { name: [props.bucket.bucketName] },
+          object: { key: [{ prefix: 'resumes/' }] },
+        },
+      },
+      targets: [new LambdaFunction(parseResume)],
+    });
   }
 }

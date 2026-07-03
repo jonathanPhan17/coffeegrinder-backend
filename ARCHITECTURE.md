@@ -34,9 +34,12 @@ instead of *many patients vs. one trial's criteria*, it is *one resume vs. many 
 | Frontend           | React + TypeScript + Vite + Tailwind / shadcn (cozy "cinnamon" theme) |
 | Frontend hosting   | S3 + CloudFront (or Vercel)                                            |
 | API                | API Gateway (HTTP API) + Lambda (TypeScript, Fastify)                  |
+| Async triggers     | **EventBridge** (S3 object-created -> workers; keeps cross-stack deps one-directional) |
 | Async pipeline     | **AWS Step Functions** (Fetch -> Distributed Map -> Persist)          |
-| AI                 | **Amazon Bedrock** — Claude (Haiku for extraction, Sonnet/Opus for adjudication) |
+| AI                 | **Amazon Bedrock** — Claude Sonnet, one grounded scorecard call per posting (Converse API + tool-use JSON, prompt caching) |
 | Data               | **DynamoDB** (single-table) + **S3** (resume files)                   |
+| Lambda tooling     | Powertools for AWS Lambda (TS) — structured logs/tracing/metrics; Zod at LLM boundaries |
+| Testing            | Vitest + aws-sdk-client-mock                                           |
 | Job ingestion      | **Apify** (managed scraping API) behind a swappable `JobSource`        |
 | Auth               | Amazon Cognito (added later)                                           |
 | Notifications      | EventBridge Scheduler + Gmail API (stretch / V3)                      |
@@ -47,60 +50,48 @@ NAT gateway, and connection-pooling — the single biggest cost and complexity s
 
 ---
 
-## 3. System diagram
+## 3. System components
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  FRONTEND  — React + TS + Vite + Tailwind/shadcn (cinnamon theme)            │
-│  Hosted on S3 + CloudFront (or Vercel)                                        │
-│  Screens: Upload · Run config (pick N) · Results (sorted) · Scorecard ·       │
-│           Cover-letter drafter · Pipeline board                               │
-└───────────────────────────────┬─────────────────────────────────────────────┘
-                                 │ HTTPS / JSON
-                                 ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  API  — API Gateway (HTTP API)  ──►  Lambda handlers (TS, Fastify)            │
-│  Routes: POST /resume · POST /runs · GET /runs/{id} · GET /matches            │
-│          POST /coverletter · PATCH /matches/{id} (status)                     │
-│  Auth: Cognito (added later)                                                   │
-└───────┬──────────────────────────┬───────────────────────────┬───────────────┘
-        │ upload                    │ start run                  │ read/write
-        ▼                           ▼                            ▼
-   ┌─────────┐          ┌─────────────────────────┐       ┌──────────────┐
-   │   S3    │          │   STEP FUNCTIONS         │       │  DynamoDB    │
-   │ resumes │          │   (the matching pipeline)│◄─────►│ (single tbl) │
-   └────┬────┘          │                          │       └──────────────┘
-        │               │  1. Fetch (Apify)        │
-        ▼               │     start run -> wait     │──────► Apify REST API
-   parse Lambda         │     (webhook callback)    │        (LinkedIn/Indeed/…)
-   (Textract/pdf)       │           │               │
-        │               │  2. Distributed Map ──────┼──► fan-out over N postings
-        └──► profile     │     per posting:          │
-             (DynamoDB)  │       Extract  (Bedrock)  │──────► Amazon Bedrock
-                         │       Verify   (Bedrock)  │        (Claude: Haiku +
-                         │       Adjudicate(Bedrock) │         Sonnet/Opus)
-                         │           │               │
-                         │  3. Persist scored matches│──────► DynamoDB
-                         └─────────────────────────┘
-                                 (no VPC — all IAM + public AWS APIs)
+Each node in the flow is one row; the last two columns preserve the arrows' direction —
+what invokes a component (upstream) and what it calls or writes (downstream). The
+end-to-end *sequence* is narrated in §4.
 
-  Cover letters:  POST /coverletter ─► Lambda ─► Bedrock (resume + posting) ─► DynamoDB
-  Stretch (V3):   EventBridge Scheduler ─► poll Lambda ─► Gmail API ─► classify reply ─► notify
-```
+| Component | Tech | Invoked by | Calls / reads / writes |
+|-----------|------|-----------|------------------------|
+| **Frontend** | React + TS + Vite + Tailwind/shadcn on S3 + CloudFront (or Vercel) | The user | The API, over HTTPS / JSON |
+| **API** | API Gateway (HTTP API) → Lambda (TS, Fastify) | Frontend | Presigns S3 uploads · starts Step Functions runs · reads/writes DynamoDB |
+| **Resume bucket** | S3 | API (presigned `PUT`) | Emits `ObjectCreated` → EventBridge |
+| **Parse worker** | Lambda (`pdf-parse`) | EventBridge S3 object-created, `resumes/` prefix | Reads the S3 object · writes extracted text to the profile (DynamoDB) |
+| **Matching pipeline** | Step Functions — Fetch → Distributed Map → Persist | `POST /runs`, via the API | Fetches from Apify · per posting: Score (Bedrock) + Verify (in code) · writes scored matches to DynamoDB |
+| **AI** | Amazon Bedrock — Claude Sonnet, tool-use JSON | Distributed Map (Score) · cover-letter Lambda | Returns strict-JSON scorecards / letter text |
+| **Job ingestion** | Apify REST API (behind `JobSource`) | Step Functions Fetch state | Returns normalized postings (§6) |
+| **Data** | DynamoDB (single table) | API · workers · Step Functions | Profiles · runs · postings · matches · evidence · letters (§7) |
+| **Cover letters** | Lambda | `POST /coverletter` | Bedrock (resume + posting) → DynamoDB |
+| **Follow-ups** (V3) | EventBridge Scheduler → poll Lambda → Gmail API | A schedule | Classifies replies → notifies |
+
+*Every hop above is an IAM-authed public AWS API or an HTTPS call — no VPC, no NAT, no
+VPC endpoints (see §2).*
 
 ---
 
 ## 4. End-to-end flow
 
-1. **Upload** — User uploads a resume PDF via a presigned URL to **S3**. A parse Lambda
-   extracts text (Textract or `pdf-parse`), structures it into a profile, stores it in DynamoDB.
+1. **Upload** — User uploads a resume PDF via a presigned URL to **S3**. An **EventBridge
+   rule** (S3 object-created, `resumes/` prefix) triggers a parse Lambda that extracts text
+   with `pdf-parse` (fallback: `unpdf`) and stores it on the profile in DynamoDB. The
+   profile write is conditional on the event's S3 key matching the profile's current key,
+   so stale/duplicate events are no-ops. Textract was considered and rejected: resumes are
+   digital-native PDFs (no OCR needed) and the text feeds an LLM that tolerates rough layout.
+   *(EventBridge — not a direct S3 bucket notification — because the bucket lives in the
+   stateful stack and the worker in the stateless one; a bucket notification would reference
+   the Lambda ARN from the bucket's stack and create a circular stack dependency.)*
 2. **Run** — User picks **N** (e.g. "match me against 20 jobs") + search terms and hits Go.
    `POST /runs` starts a **Step Functions** execution and returns a `runId`. The frontend
    polls `GET /runs/{id}` for status.
 3. **Fetch** — Step 1 of the state machine calls **Apify**, waits for the run to complete
    (webhook callback), normalizes the results into the standard posting shape (§6),
    and writes N posting rows.
-4. **Match (fan-out)** — A **Distributed Map** runs the 3-stage pipeline (§5) on all N
+4. **Match (fan-out)** — A **Distributed Map** runs the scorecard evaluation (§5) on all N
    postings in parallel with a capped concurrency.
 5. **Results** — Scored matches are written to DynamoDB; the UI lists them **sorted, best
    first**, each with a **% score** and an expandable **scorecard**.
@@ -114,23 +105,43 @@ NAT gateway, and connection-pooling — the single biggest cost and complexity s
 
 ## 5. The matching pipeline (the core)
 
-Three Bedrock-backed stages, run per posting inside the Distributed Map. Mirrors the
-clinical "Agent 1 / Agent 2 / Agent 3" pattern.
+One grounded Bedrock call per posting inside the Distributed Map, followed by a
+**deterministic verification step in plain code**. This evolved from the clinical
+"Agent 1 / Agent 2 / Agent 3" pattern (Extract / Verify / Adjudicate as three LLM
+calls) — see the rationale below.
 
-| Stage          | Job                                                                    | Model tier            |
+| Stage          | Job                                                                    | Runs on               |
 |----------------|-----------------------------------------------------------------------|-----------------------|
-| **Extract**    | For each criterion, pull supporting evidence snippets from the resume. | Haiku (cheap, high volume) |
-| **Verify**     | Score that evidence: is it real, relevant, strong? (confidence 0–1)    | Haiku / mid           |
-| **Adjudicate** | Final per-criterion verdict (met / partial / not_met) + overall score + reasoning. | Sonnet / Opus (quality) |
+| **Score**      | Criteria + resume in -> strict JSON out: per criterion a verdict (met / partial / not_met), reasoning, and **mandatory verbatim resume quotes as evidence**. Overall score + verdict. | Bedrock — Claude Sonnet, Converse API + tool-use (forced JSON schema), temperature ~0, Zod-validated |
+| **Verify**     | String-match every quoted evidence snippet against the actual resume text. A fabricated quote can't match -> flag / downgrade the criterion / retry. | Plain code in the Lambda — free, deterministic |
 
 Before matching, each **job posting is parsed into structured criteria** (a separate
 LLM call): `{ must_haves[], nice_to_haves[], dealbreakers[] }`. The resume is parsed into
-a structured profile once per upload. Tiered model routing (cheap for extraction, strong
-for the final call) keeps cost down while protecting verdict quality.
+a structured profile once per upload. The resume + system-prompt prefix repeats across
+all N calls in a run — **prompt caching** makes the fan-out's repeated tokens ~90% cheaper.
 
 Output per match: an **overall score (%)**, a **verdict**, and a list of **per-criterion
-evidence** rows (criterion, met/partial/not_met, confidence, evidence snippet, reasoning) —
+evidence** rows (criterion, met/partial/not_met, verified evidence quote, reasoning) —
 this is the explainable scorecard.
+
+**Why one call instead of three.** The quality trick that made staging valuable is
+evidence-grounding — verdicts anchored to verbatim quotes, not vibes — and that survives
+in a single call once the schema *requires* quotes and code verifies them. What the
+3-call version added on top was cost, latency, 3x the Bedrock-quota burn per posting
+(the real scaling ceiling), and two extra stochastic/schema boundaries where variance
+compounds. An LLM "Verify" stage emitting confidence floats is weaker than a free
+string-match. Each posting is still its own Step Functions chain, so splitting Score
+back into stages later is a one-state change, not a redesign.
+
+**Scale path (deferred).** At N in the hundreds+, add an **embedding pre-rank** state
+*before* the Distributed Map: embed resume + postings (Bedrock embeddings), cosine-rank,
+and run the Score call only on the top K. The map already treats its input as
+"ranked/filtered postings", so the funnel drops in as one new state with nothing
+downstream changing. Not built until real volume demands it.
+
+**No LLM frameworks.** Step Functions is the orchestrator and the Bedrock SDK call is
+~15 lines; LangChain/LlamaIndex would duplicate the orchestration behind an opaque
+abstraction. Plain SDK + Zod only.
 
 ---
 
@@ -237,7 +248,8 @@ Implementations:
 ## 10. Cost posture
 
 Everything scales to zero except what you explicitly run:
-- Lambda, API Gateway, S3, Step Functions, DynamoDB (on-demand) -> ~$0 at rest.
-- Bedrock -> pay per token; tiered model routing keeps it low.
+- Lambda, API Gateway, S3, EventBridge, Step Functions, DynamoDB (on-demand) -> ~$0 at rest.
+- Bedrock -> pay per token; one call per posting + prompt caching (resume prefix repeats
+  across the fan-out) keeps a full N=20 run in the cents. Apify dominates real spend, not Bedrock.
 - Apify -> usage-based; the "pick N" cap throttles spend.
 - No NAT gateway, no always-on RDS, no VPC endpoints.

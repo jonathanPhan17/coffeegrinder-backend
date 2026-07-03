@@ -1,4 +1,5 @@
-import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
+import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb } from '../shared/dynamodb';
 import { TABLE_NAME } from '../shared/env';
 import { keys } from '../shared/keys';
@@ -49,4 +50,40 @@ export async function putPendingProfile(
   );
 
   return profile;
+}
+
+// Records parse results, but only if the profile still points at the object the
+// event was for — guards the re-upload race (EventBridge is at-least-once, and a
+// stale event must not stamp old text over a newer upload). Returns false on the
+// stale no-op.
+export async function markParsed(
+  userId: string,
+  input: { s3Key: string; pages: number; text: string },
+): Promise<boolean> {
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: keys.userProfile(userId),
+        UpdateExpression: 'SET #parsed = :parsed, #pages = :pages, #rawText = :rawText',
+        ConditionExpression: '#s3Key = :eventKey',
+        ExpressionAttributeNames: {
+          '#parsed': 'parsed',
+          '#pages': 'pages',
+          '#rawText': 'rawText',
+          '#s3Key': 's3Key',
+        },
+        ExpressionAttributeValues: {
+          ':parsed': true,
+          ':pages': input.pages,
+          ':rawText': input.text,
+          ':eventKey': input.s3Key,
+        },
+      }),
+    );
+    return true;
+  } catch (err) {
+    if (err instanceof ConditionalCheckFailedException) return false;
+    throw err;
+  }
 }
