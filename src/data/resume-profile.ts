@@ -52,31 +52,51 @@ export async function putPendingProfile(
   return profile;
 }
 
-// Records parse results, but only if the profile still points at the object the
-// event was for — guards the re-upload race (EventBridge is at-least-once, and a
-// stale event must not stamp old text over a newer upload). Returns false on the
-// stale no-op.
-export async function markParsed(
+// Records parse + structure results, but only if the profile still points at the
+// object the event was for — guards the re-upload race (EventBridge is at-least-once,
+// and a stale event must not stamp old data over a newer upload). One atomic write
+// flips parsed:true together with the structured fields, so a reader never sees
+// parsed:true over an empty profile. Returns false on the stale no-op.
+export async function saveParsedProfile(
   userId: string,
-  input: { s3Key: string; pages: number; text: string },
+  input: {
+    s3Key: string;
+    pages: number;
+    text: string;
+    targetRole: string;
+    experience: string;
+    education: string;
+    skills: string[];
+  },
 ): Promise<boolean> {
   try {
     await ddb.send(
       new UpdateCommand({
         TableName: TABLE_NAME,
         Key: keys.userProfile(userId),
-        UpdateExpression: 'SET #parsed = :parsed, #pages = :pages, #rawText = :rawText',
+        UpdateExpression:
+          'SET #parsed = :parsed, #pages = :pages, #rawText = :rawText, ' +
+          '#targetRole = :targetRole, #experience = :experience, ' +
+          '#education = :education, #skills = :skills',
         ConditionExpression: '#s3Key = :eventKey',
         ExpressionAttributeNames: {
           '#parsed': 'parsed',
           '#pages': 'pages',
           '#rawText': 'rawText',
+          '#targetRole': 'targetRole',
+          '#experience': 'experience',
+          '#education': 'education',
+          '#skills': 'skills',
           '#s3Key': 's3Key',
         },
         ExpressionAttributeValues: {
           ':parsed': true,
           ':pages': input.pages,
           ':rawText': input.text,
+          ':targetRole': input.targetRole,
+          ':experience': input.experience,
+          ':education': input.education,
+          ':skills': input.skills,
           ':eventKey': input.s3Key,
         },
       }),
