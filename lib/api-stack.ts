@@ -11,6 +11,7 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import type { Bucket } from 'aws-cdk-lib/aws-s3';
 import type { Construct } from 'constructs';
 import type { EnvConfig } from './config';
+import { MatchingMachine } from './constructs/matching-machine';
 
 export interface ApiStackProps extends StackProps {
   config: EnvConfig;
@@ -31,6 +32,8 @@ export class ApiStack extends Stack {
       );
     }
 
+    const matching = new MatchingMachine(this, 'MatchingMachine', { table: props.table });
+
     const fn = new NodejsFunction(this, 'FastifyLith', {
       entry: path.join(__dirname, '..', 'src', 'handler.ts'),
       handler: 'handler',
@@ -39,6 +42,7 @@ export class ApiStack extends Stack {
       environment: {
         TABLE_NAME: props.table.tableName,
         BUCKET_NAME: props.bucket.bucketName,
+        STATE_MACHINE_ARN: matching.stateMachine.stateMachineArn,
       },
       bundling: {
         minify: true,
@@ -51,6 +55,7 @@ export class ApiStack extends Stack {
 
     props.table.grantReadWriteData(fn);
     props.bucket.grantReadWrite(fn);
+    matching.stateMachine.grantStartExecution(fn);
 
     const api = new HttpApi(this, 'HttpApi', {
       defaultIntegration: new HttpLambdaIntegration('Lith', fn),
