@@ -5,6 +5,7 @@ import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations
 import type { TableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { Rule } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
+import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { Architecture, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import type { Bucket } from 'aws-cdk-lib/aws-s3';
@@ -23,6 +24,12 @@ export interface ApiStackProps extends StackProps {
 export class ApiStack extends Stack {
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
+
+    if (!props.config.bedrockModelId) {
+      throw new Error(
+        'ApiStack requires bedrockModelId — set it via `-c bedrockModelId=<id>` or the BEDROCK_MODEL_ID env var.',
+      );
+    }
 
     const fn = new NodejsFunction(this, 'FastifyLith', {
       entry: path.join(__dirname, '..', 'src', 'handler.ts'),
@@ -70,11 +77,12 @@ export class ApiStack extends Stack {
       handler: 'handler',
       runtime: Runtime.NODEJS_20_X,
       architecture: Architecture.ARM_64,
-      timeout: Duration.seconds(30),
+      timeout: Duration.seconds(60),
       memorySize: 512,
       environment: {
         TABLE_NAME: props.table.tableName,
         BUCKET_NAME: props.bucket.bucketName,
+        BEDROCK_MODEL_ID: props.config.bedrockModelId,
       },
       bundling: {
         minify: true,
@@ -85,6 +93,13 @@ export class ApiStack extends Stack {
 
     props.bucket.grantRead(parseResume);
     props.table.grantWriteData(parseResume);
+    parseResume.addToRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['bedrock:InvokeModel'],
+        resources: bedrockInvokeResources(props.config.bedrockModelId, this.region, this.account),
+      }),
+    );
 
     new Rule(this, 'ResumeUploadedRule', {
       eventPattern: {
@@ -98,4 +113,24 @@ export class ApiStack extends Stack {
       targets: [new LambdaFunction(parseResume)],
     });
   }
+}
+
+// Resource ARNs for bedrock:InvokeModel. A cross-region inference profile
+// (e.g. `us.anthropic.…`) needs both the profile ARN in the deploy account/region and
+// the underlying foundation-model ARN with a wildcarded region, since the profile
+// routes the call across regions. A bare foundation-model id needs only its one ARN.
+// Either way the grant stays scoped to the single model.
+const INFERENCE_PROFILE_GEOS = ['us', 'eu', 'apac'];
+
+function bedrockInvokeResources(modelId: string, region: string, account: string): string[] {
+  const dot = modelId.indexOf('.');
+  const geo = dot > 0 ? modelId.slice(0, dot) : '';
+  if (INFERENCE_PROFILE_GEOS.includes(geo)) {
+    const foundationModelId = modelId.slice(dot + 1);
+    return [
+      `arn:aws:bedrock:${region}:${account}:inference-profile/${modelId}`,
+      `arn:aws:bedrock:*::foundation-model/${foundationModelId}`,
+    ];
+  }
+  return [`arn:aws:bedrock:${region}::foundation-model/${modelId}`];
 }
