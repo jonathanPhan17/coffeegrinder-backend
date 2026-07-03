@@ -48,14 +48,18 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
     };
     await putRun(DEFAULT_USER_ID, run);
 
+    let postingId: string | undefined;
     if (posting) {
       const [normalized] = await new PastedSource([posting]).fetch({ query, location, limit: count });
-      if (normalized) await putPosting(run.id, normalized);
+      if (normalized) {
+        await putPosting(run.id, normalized);
+        postingId = normalized.sourceId;
+      }
     }
 
     await startRunExecution({
       name: run.id,
-      payload: { userId: DEFAULT_USER_ID, runId: run.id },
+      payload: { userId: DEFAULT_USER_ID, runId: run.id, postingId },
     });
 
     return reply.code(201).send(run);

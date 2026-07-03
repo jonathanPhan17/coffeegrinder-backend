@@ -32,7 +32,32 @@ export class ApiStack extends Stack {
       );
     }
 
-    const matching = new MatchingMachine(this, 'MatchingMachine', { table: props.table });
+    const extractCriteria = new NodejsFunction(this, 'ExtractCriteria', {
+      entry: path.join(__dirname, '..', 'src', 'workers', 'extract-criteria.ts'),
+      handler: 'handler',
+      runtime: Runtime.NODEJS_20_X,
+      architecture: Architecture.ARM_64,
+      timeout: Duration.seconds(60),
+      memorySize: 512,
+      environment: {
+        TABLE_NAME: props.table.tableName,
+        BEDROCK_MODEL_ID: props.config.bedrockModelId,
+      },
+      bundling: { minify: true, sourceMap: true, externalModules: [] },
+    });
+    props.table.grantReadWriteData(extractCriteria);
+    extractCriteria.addToRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['bedrock:InvokeModel'],
+        resources: bedrockInvokeResources(props.config.bedrockModelId, this.region, this.account),
+      }),
+    );
+
+    const matching = new MatchingMachine(this, 'MatchingMachine', {
+      table: props.table,
+      extractCriteria,
+    });
 
     const fn = new NodejsFunction(this, 'FastifyLith', {
       entry: path.join(__dirname, '..', 'src', 'handler.ts'),

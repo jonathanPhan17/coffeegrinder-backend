@@ -1,11 +1,12 @@
-import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import type { PostingCriteria } from '../ai/posting-criteria';
 import { ddb } from '../shared/dynamodb';
 import { TABLE_NAME } from '../shared/env';
 import { keys } from '../shared/keys';
 import type { JobPosting, Run } from '../types/domain';
 
-// Reads/writes RUN and POSTING items (§7). Status transitions after kickoff are owned
-// by the state machine (DynamoDB UpdateItem states), not this module.
+// Reads/writes RUN and POSTING items (§7). Status transitions after kickoff are owned by
+// the state machine (DynamoDB UpdateItem states), not this module.
 
 function toRun(item: Record<string, unknown>): Run {
   return {
@@ -17,6 +18,21 @@ function toRun(item: Record<string, unknown>): Run {
     remote: item.remote as boolean | undefined,
     screened: item.screened as number | undefined,
     createdAt: item.createdAt as string,
+  };
+}
+
+function toPosting(item: Record<string, unknown>): JobPosting {
+  return {
+    sourceId: item.sourceId as string,
+    source: item.source as JobPosting['source'],
+    title: item.title as string,
+    company: item.company as string,
+    location: item.location as string | undefined,
+    remote: item.remote as boolean | undefined,
+    description: item.description as string,
+    applyUrl: item.applyUrl as string,
+    salary: item.salary as JobPosting['salary'],
+    postedAt: item.postedAt as string | undefined,
   };
 }
 
@@ -41,6 +57,29 @@ export async function putPosting(runId: string, posting: JobPosting): Promise<vo
     new PutCommand({
       TableName: TABLE_NAME,
       Item: { ...keys.posting(runId, posting.sourceId), ...posting },
+    }),
+  );
+}
+
+export async function getPosting(runId: string, postingId: string): Promise<JobPosting | null> {
+  const { Item } = await ddb.send(
+    new GetCommand({ TableName: TABLE_NAME, Key: keys.posting(runId, postingId) }),
+  );
+  return Item ? toPosting(Item) : null;
+}
+
+export async function saveCriteria(
+  runId: string,
+  postingId: string,
+  criteria: PostingCriteria,
+): Promise<void> {
+  await ddb.send(
+    new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: keys.posting(runId, postingId),
+      UpdateExpression: 'SET #criteria = :criteria',
+      ExpressionAttributeNames: { '#criteria': 'criteria' },
+      ExpressionAttributeValues: { ':criteria': criteria },
     }),
   );
 }
