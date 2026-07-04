@@ -32,3 +32,19 @@ Fix: wrap the kickoff and set the stored run to `status: 'error'` before rethrow
 
 In `src/routes/runs.ts`, `applyUrl` is `z.string()`, but the frontend deep-links it as
 the Apply target. Tighten to `z.string().url()` next time the schema is touched.
+
+## Dealbreaker polarity relies on the prompt
+
+The `emit_criteria` schema instructs the model to phrase dealbreakers as requirements
+(met = satisfied), and the confidence-gated cap in `score.ts` depends on that convention.
+On unusual JDs the model may still emit a disqualifier-phrased dealbreaker, silently
+inverting that row's polarity. Mitigation is prompt-level only today — a deterministic
+guard (or a post-check that flags suspected inversions) would harden it. A UX follow-up:
+surface low-confidence dealbreaker calls to the user rather than silently not-capping.
+
+## Tenure verification without explicit dates
+
+The Score model marks "5+ years X" as `not_met` when the résumé lists the skill but has
+no date ranges to prove duration — defensible, but it systematically fails experience
+must-haves for résumés written without dates. Open question for a prompt/parsing pass:
+infer tenure from role date ranges, or treat undated experience more leniently.
