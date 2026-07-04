@@ -27,7 +27,8 @@ const TOOL_INPUT_SCHEMA = {
     dealbreakers: {
       type: 'array',
       items: { type: 'string' },
-      description: 'Disqualifiers — e.g. required on-site location, clearance, work authorization.',
+      description:
+        "Hard pass/fail constraints. Phrase each as a REQUIREMENT the candidate must satisfy, so that meeting it is good — e.g. 'Authorized to work in the US without sponsorship', 'Willing to work on-site in NYC'. Never phrase as a disqualifier (not 'Requires sponsorship').",
     },
   },
   required: ['must_haves', 'nice_to_haves', 'dealbreakers'],

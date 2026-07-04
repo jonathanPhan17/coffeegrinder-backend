@@ -56,8 +56,12 @@ const SYSTEM_PROMPT =
   "You score a candidate's résumé against a job posting's screening criteria. For EVERY " +
   'criterion, decide met / partial / not_met from the résumé, give a one-sentence reasoning, ' +
   'a confidence from 0 to 1, and — for met or partial — a quote copied VERBATIM from the résumé ' +
-  'that supports the verdict (use an empty string for not_met). Also write a one-line overall ' +
-  'summary. Do NOT compute a numeric score. Return your answer only by calling the emit_scorecard tool.';
+  'that supports the verdict (use an empty string for not_met). ' +
+  'Every criterion, including dealbreakers, is phrased as a requirement the candidate should meet: ' +
+  'met = the résumé shows they satisfy it, not_met = the résumé shows they do not. When a dealbreaker ' +
+  'cannot be judged from the résumé, do not assume the worst — use low confidence and note it in the summary. ' +
+  'Also write a one-line overall summary. Do NOT compute a numeric score. ' +
+  'Return your answer only by calling the emit_scorecard tool.';
 
 function formatCriteria(criteria: PostingCriteria): string {
   const section = (title: string, items: string[]): string =>

@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { CriterionGroup, Verdict } from '../types/domain';
 import { computeScore, scoreToFitTier } from './score';
 
-const c = (group: CriterionGroup, verdict: Verdict) => ({ group, verdict });
+const c = (group: CriterionGroup, verdict: Verdict, confidence = 0.9) => ({
+  group,
+  verdict,
+  confidence,
+});
 
 describe('computeScore', () => {
   it('is 100 when every weighted criterion is met', () => {
@@ -18,10 +22,24 @@ describe('computeScore', () => {
     expect(computeScore([c('must_have', 'met'), c('must_have', 'not_met')])).toBe(50);
   });
 
-  it('caps the score at 25 when a dealbreaker is not_met (triggered)', () => {
+  it('caps the score at 25 when a dealbreaker is not_met at high confidence', () => {
     expect(
-      computeScore([c('must_have', 'met'), c('nice_to_have', 'met'), c('dealbreaker', 'not_met')]),
+      computeScore([
+        c('must_have', 'met'),
+        c('nice_to_have', 'met'),
+        c('dealbreaker', 'not_met', 0.9),
+      ]),
     ).toBe(25);
+  });
+
+  it('does NOT cap a not_met dealbreaker below the confidence threshold (unknown, not violated)', () => {
+    expect(
+      computeScore([
+        c('must_have', 'met'),
+        c('nice_to_have', 'met'),
+        c('dealbreaker', 'not_met', 0.5),
+      ]),
+    ).toBe(100);
   });
 
   it('does NOT cap when a dealbreaker is met (satisfied / not triggered)', () => {
