@@ -188,8 +188,8 @@ Implementations:
 | User profile/resume | `USER#<id>`     | `PROFILE`           | structured profile + S3 key of raw file       |
 | Run                 | `USER#<id>`     | `RUN#<runId>`       | status, N, search terms                        |
 | Job posting         | `RUN#<runId>`   | `POSTING#<id>`      | normalized `JobPosting` + parsed criteria      |
-| Match (scored)      | `RUN#<runId>`   | `MATCH#<postingId>` | GSI1: `USER#<id>` / `STATUS#<status>` (board); score for sort |
-| Match evidence      | `MATCH#<id>`    | `EVIDENCE#<crit>`   | per-criterion verdict/confidence/snippet       |
+| Match (scored)      | `RUN#<runId>`   | `MATCH#<postingId>` | embeds `evidence[]`; GSI1: `USER#<id>` / `STATUS#<status>` (board + id lookup); score for sort |
+| Match evidence      | *(embedded)*    | —                   | lives on the Match item as `evidence[]` (one query for `GET /matches?run=`); split to `MATCH#<id>` / `EVIDENCE#<crit>` rows only if it outgrows the 400 KB item |
 | Cover letter        | `MATCH#<id>`    | `LETTER#<version>`  | versioned drafts                               |
 
 **Access patterns (all covered without joins):**
