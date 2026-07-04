@@ -7,7 +7,7 @@ export const sfn = new SFNClient({});
 // one execution (a retried POST with the same id is rejected rather than duplicated).
 export function startRunExecution(input: {
   name: string;
-  payload: { userId: string; runId: string; postingId?: string };
+  payload: { userId: string; runId: string; postingIds: string[] };
 }): Promise<unknown> {
   return sfn.send(
     new StartExecutionCommand({

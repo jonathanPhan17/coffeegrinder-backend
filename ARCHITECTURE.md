@@ -232,6 +232,13 @@ Implementations:
 3. `PastedSource` -> single match via Step Functions.
 4. Scorecard UI: score + per-criterion "why".
 5. Scale to N via Distributed Map + configurable count.
+   *Built with an **inline Map** (`maxConcurrency: 5`) over the run's `postingIds`, not a
+   Distributed Map. For N ≤ 50 (the `count` cap) the inline Map needs no S3 ItemReader and
+   keeps the whole run in one execution — simpler, and the concurrency cap already protects
+   Bedrock. A per-item catch records a `failed` counter on the run and skips the posting so
+   one bad JD can't sink the run; each success bumps `screened` for live progress. **Swap to
+   a Distributed Map** (S3-sourced items, native tolerated-failure %, per-item child
+   executions) when `ApifySource` (phase 7) pushes N into the hundreds.*
 6. Sorted results list + deep-link "Apply".
 
 **V2 — makes it feel like a product:**

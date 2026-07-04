@@ -42,6 +42,46 @@ inverting that row's polarity. Mitigation is prompt-level only today — a deter
 guard (or a post-check that flags suspected inversions) would harden it. A UX follow-up:
 surface low-confidence dealbreaker calls to the user rather than silently not-capping.
 
+## Surface run.failed in the UI
+
+The matching state machine records a per-run `failed` counter (`ADD failed :one` on the run
+item) each time a posting's chain is caught and skipped, so a run can land `done` with zero
+matches yet stay explainable. Nothing reads it back yet: `toRun` in `src/data/run.ts` doesn't
+project `failed`, the frontend `domain.ts` Run type has no `failed` field, and the results
+screen can't distinguish "all N postings errored" from "genuinely no fits". Coordinated
+frontend change: add `failed?` to Run, project it in `toRun`, and surface it (e.g. a banner
+when `failed > 0`).
+
+**Priority note (2026-07-04):** no longer hypothetical — run `ef588719` dropped a posting
+(the candidate's best match, a React/TS/RN role) with no signal to the user beyond the raw
+counter. Also: because the failure is *tolerated* (the Map iteration ends successfully via
+RecordFailure), Step Functions redrive can't recover the dropped posting — as far as SFN is
+concerned the run completed cleanly. Recovery today means a whole new run; the real fix is a
+"rescreen the failed ones" affordance keyed off `failed`. Write that down before it's forgotten.
+
+## callTool robustness — remaining hardening
+
+The self-correcting retry (feed the Zod error back as a Converse `toolResult` error turn) and
+the decision-grade failure log (`event`, `label`, `attempt`, `stopReason`, `usage`, `issues`,
+`rawInput`) shipped on `feat/calltool-robustness`, motivated by run `ef588719` (a ScorePosting
+call twice returned `criteria` as a string / `summary` missing, dropping the posting).
+Production sign-off passed 2026-07-04 against `us.anthropic.claude-sonnet-4-5-20250929-v1:0`
+via `scripts/calltool-signoff.ts` (attempt 1 failed Zod → Bedrock accepted the toolResult
+correction → model recovered). Re-run that harness (`npm run signoff:calltool` with
+`BEDROCK_MODEL_ID` set) on any model swap. Still outstanding:
+
+- **Evidence-gated coercion:** now that `rawInput` is logged, if a real failure shows a field
+  arriving as stringified JSON, add a targeted `JSON.parse`-before-validate (a two-line
+  follow-up). Do not add speculatively.
+- **Correlation id in failure logs:** the entry carries `label` but not `postingId`/`runId`
+  (callTool is generic). Have each worker `logger.appendKeys({ runId, postingId })` so a
+  failure ties to a posting without time-window + SFN-history correlation.
+- **Tighten the Score tool input JSON Schema** so `criteria`/`summary` are harder to violate.
+
+Rate signal: filter `llm_validation_exhausted` by `label` for the true per-call-site drop rate,
+`llm_validation_retry` for the recoverable-flake rate. Orthogonal to prompt caching (cost /
+latency, not output correctness) — don't conflate the two.
+
 ## Tenure verification without explicit dates
 
 The Score model marks "5+ years X" as `not_met` when the résumé lists the skill but has

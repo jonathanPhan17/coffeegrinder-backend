@@ -66,6 +66,6 @@ describe('extractCriteria', () => {
     bedrockMock.on(ConverseCommand).resolves(toolReply({ nope: true }));
 
     await expect(extractCriteria('job description text')).rejects.toThrow(/schema validation/);
-    expect(bedrockMock.commandCalls(ConverseCommand)).toHaveLength(2);
+    expect(bedrockMock.commandCalls(ConverseCommand)).toHaveLength(3);
   });
 });
