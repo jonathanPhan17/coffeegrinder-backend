@@ -59,33 +59,28 @@ RecordFailure), Step Functions redrive can't recover the dropped posting — as 
 concerned the run completed cleanly. Recovery today means a whole new run; the real fix is a
 "rescreen the failed ones" affordance keyed off `failed`. Write that down before it's forgotten.
 
-## Malformed Score output silently drops matches (callTool robustness)
+## callTool robustness — remaining hardening
 
-First production incident (run `ef588719`, 2026-07-04): one of three ScorePosting calls failed
-and its posting was dropped from the results. Cause pinned from the SFN history + Powertools
-logs — **not** throttling, `max_tokens`, or a Lambda timeout (execution ran 24s; a single
-TaskFailed with no retry cycle, and the error was `match scoring failed schema validation after
-retry`). Both `callTool` attempts returned the same Zod issues: `criteria` as a **string**
-(expected array) and `summary` **missing**. So the Score model intermittently emits malformed
-tool input; at temp ~0 it was stable-wrong within the run (both retries identical) but a fresh
-run scored the same posting fine. Observed rate so far: 1 of 6 Score calls — at N=50 that is
-several silent drops per run if it holds.
+The self-correcting retry (feed the Zod error back as a Converse `toolResult` error turn) and
+the decision-grade failure log (`event`, `label`, `attempt`, `stopReason`, `usage`, `issues`,
+`rawInput`) shipped on `feat/calltool-robustness`, motivated by run `ef588719` (a ScorePosting
+call twice returned `criteria` as a string / `summary` missing, dropping the posting).
+Production sign-off passed 2026-07-04 against `us.anthropic.claude-sonnet-4-5-20250929-v1:0`
+via `scripts/calltool-signoff.ts` (attempt 1 failed Zod → Bedrock accepted the toolResult
+correction → model recovered). Re-run that harness (`npm run signoff:calltool` with
+`BEDROCK_MODEL_ID` set) on any model swap. Still outstanding:
 
-Fix candidates, best placed in the shared `callTool` spine so every caller (structure /
-criteria / score) benefits:
-- **Self-correcting retry** — the retry re-sends the identical prompt today; feed the Zod error
-  back in ("your previous output had `criteria` as a string; return an array") so the model can
-  repair instead of repeating the mistake.
-- **Tolerant coercion** — if a field arrives as a JSON string, `JSON.parse` before validating.
-  Can't confirm this would have recovered the incident (see next).
-- **Log raw output on validation failure** — the WARN logs the Zod issues but not a preview of
-  the model's actual output, and carries no postingId/runId (had to correlate by time window +
-  SFN history). Add a truncated raw-output preview and a correlation id so the next incident is
-  diagnosable without guessing.
+- **Evidence-gated coercion:** now that `rawInput` is logged, if a real failure shows a field
+  arriving as stringified JSON, add a targeted `JSON.parse`-before-validate (a two-line
+  follow-up). Do not add speculatively.
+- **Correlation id in failure logs:** the entry carries `label` but not `postingId`/`runId`
+  (callTool is generic). Have each worker `logger.appendKeys({ runId, postingId })` so a
+  failure ties to a posting without time-window + SFN-history correlation.
 - **Tighten the Score tool input JSON Schema** so `criteria`/`summary` are harder to violate.
 
-Orthogonal to prompt caching — caching cuts cost/latency but does nothing for output
-correctness; don't conflate the two.
+Rate signal: filter `llm_validation_exhausted` by `label` for the true per-call-site drop rate,
+`llm_validation_retry` for the recoverable-flake rate. Orthogonal to prompt caching (cost /
+latency, not output correctness) — don't conflate the two.
 
 ## Tenure verification without explicit dates
 
