@@ -19,6 +19,13 @@ export interface ToolCallSpec {
   userText: string;
   /** Used in logs and the failure message. */
   label: string;
+  /**
+   * Stable text (e.g. the résumé) that repeats across calls in a batch. When set, a cache
+   * checkpoint is placed right after it, so the system prompt, tool schema, and this prefix
+   * are cached — ~90% cheaper and lower-latency on repeat within Bedrock's cache TTL. Omit
+   * for one-shot or per-item calls where nothing repeats.
+   */
+  cachePrefix?: string;
   maxTokens?: number;
 }
 
@@ -47,7 +54,9 @@ interface AttemptResult {
 // attempts remain, continues the conversation with the validation error so the model can
 // repair in-context. Throws after the last attempt so callers surface failure.
 export async function callTool<T>(schema: ZodType<T>, spec: ToolCallSpec): Promise<T> {
-  let messages: Message[] = [{ role: 'user', content: [{ text: spec.userText }] }];
+  // First turn carries the cached prefix + checkpoint (when set); the retry path spreads it
+  // unchanged, so corrections read the same warm cache.
+  let messages: Message[] = [userTurn(spec, spec.userText)];
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const res = await invokeTool(spec, messages);
@@ -55,7 +64,12 @@ export async function callTool<T>(schema: ZodType<T>, spec: ToolCallSpec): Promi
     // A truncated (max_tokens) response is always a failed attempt — never accept a partial
     // tool call, even if the fragment happens to satisfy the schema.
     const parsed = res.stopReason === 'max_tokens' ? undefined : schema.safeParse(res.input);
-    if (parsed?.success) return parsed.data;
+    if (parsed?.success) {
+      // Cache observability: usage carries cacheReadInputTokens / cacheWriteInputTokens.
+      // Gated on cachePrefix so the success path stays silent for uncached calls.
+      if (spec.cachePrefix) logger.info(`${spec.label} tokens`, { label: spec.label, usage: res.usage });
+      return parsed.data;
+    }
 
     const exhausted = attempt === MAX_ATTEMPTS;
     // One structured entry per failed attempt. `event` is a filterable enum: counting
@@ -112,6 +126,16 @@ async function invokeTool(spec: ToolCallSpec, messages: Message[]): Promise<Atte
   };
 }
 
+// The initial user turn: the cached prefix + checkpoint (when set), then the variable text.
+// Shared by the first call and the correction fallback so both build the exact same shape —
+// a fallback that dropped the prefix would retry a Score call without the résumé.
+function userTurn(spec: ToolCallSpec, text: string): Message {
+  const content: ContentBlock[] = spec.cachePrefix
+    ? [{ text: spec.cachePrefix }, { cachePoint: { type: 'default' } }, { text }]
+    : [{ text }];
+  return { role: 'user', content };
+}
+
 // Build the next request that asks the model to fix its previous output.
 function withCorrection(
   messages: Message[],
@@ -147,19 +171,11 @@ function withCorrection(
     ];
   }
 
-  // Fallback: no tool call to anchor a toolResult (truncation or a refusal). Restart from a
-  // single user turn with an added instruction so the request stays well-formed — a bare
-  // second user turn with nothing to answer would be rejected by Claude via Converse.
-  return [
-    {
-      role: 'user',
-      content: [
-        {
-          text: `${spec.userText}\n\nYour previous response was invalid — ${problem}. Call ${spec.toolName} with input matching the schema.`,
-        },
-      ],
-    },
-  ];
+  // Fallback: no tool call to anchor a toolResult (truncation or a refusal). Rebuild the same
+  // first-turn shape — cached prefix + checkpoint included — with the correction appended, so a
+  // Score retry keeps the résumé (and its warm cache) and the request stays well-formed.
+  const nudged = `${spec.userText}\n\nYour previous response was invalid — ${problem}. Call ${spec.toolName} with input matching the schema.`;
+  return [userTurn(spec, nudged)];
 }
 
 function previewJson(value: unknown): string {
