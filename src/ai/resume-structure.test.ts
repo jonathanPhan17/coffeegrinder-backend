@@ -92,6 +92,6 @@ describe('structureResume', () => {
     bedrockMock.on(ConverseCommand).resolves(toolReply({ not: 'a profile' }));
 
     await expect(structureResume('raw resume text')).rejects.toThrow(/schema validation/);
-    expect(bedrockMock.commandCalls(ConverseCommand)).toHaveLength(2);
+    expect(bedrockMock.commandCalls(ConverseCommand)).toHaveLength(3);
   });
 });
