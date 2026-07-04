@@ -19,9 +19,11 @@ export interface ApiStackProps extends StackProps {
   bucket: Bucket;
 }
 
-// Stateless layer: a single Fastify "lith" Lambda behind the HTTP API's default
-// integration, so Fastify owns route dispatch. Consumes the data layer via
-// explicit props (never globals) and is granted least-privilege access to it.
+const WORKERS_DIR = path.join(__dirname, '..', 'src', 'workers');
+
+// Stateless layer: a single Fastify "lith" Lambda behind the HTTP API's default integration
+// (Fastify owns route dispatch) plus the async worker Lambdas that back the matching pipeline.
+// Consumes the data layer via explicit props and is granted least-privilege access to it.
 export class ApiStack extends Stack {
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
@@ -32,58 +34,76 @@ export class ApiStack extends Stack {
       );
     }
 
-    const extractCriteria = new NodejsFunction(this, 'ExtractCriteria', {
-      entry: path.join(__dirname, '..', 'src', 'workers', 'extract-criteria.ts'),
-      handler: 'handler',
-      runtime: Runtime.NODEJS_20_X,
-      architecture: Architecture.ARM_64,
+    const grantBedrock = (fn: NodejsFunction): void => {
+      fn.addToRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: ['bedrock:InvokeModel'],
+          resources: bedrockInvokeResources(props.config.bedrockModelId, this.region, this.account),
+        }),
+      );
+    };
+
+    // The lith serves the HTTP API; it reads/writes the whole table, presigns uploads, and
+    // starts matching runs.
+    const lith = nodeFunction(this, 'FastifyLith', {
+      entry: path.join(__dirname, '..', 'src', 'handler.ts'),
+      environment: {
+        TABLE_NAME: props.table.tableName,
+        BUCKET_NAME: props.bucket.bucketName,
+      },
+    });
+    props.table.grantReadWriteData(lith);
+    props.bucket.grantReadWrite(lith);
+
+    // Resume parse worker: S3 ObjectCreated → extract text → structure → profile.
+    const parseResume = nodeFunction(this, 'ParseResume', {
+      entry: path.join(WORKERS_DIR, 'parse-resume.ts'),
       timeout: Duration.seconds(60),
-      memorySize: 512,
+      environment: {
+        TABLE_NAME: props.table.tableName,
+        BUCKET_NAME: props.bucket.bucketName,
+        BEDROCK_MODEL_ID: props.config.bedrockModelId,
+      },
+    });
+    props.bucket.grantRead(parseResume);
+    props.table.grantWriteData(parseResume);
+    grantBedrock(parseResume);
+
+    // Matching worker 1: posting JD → structured criteria on the posting item.
+    const extractCriteria = nodeFunction(this, 'ExtractCriteria', {
+      entry: path.join(WORKERS_DIR, 'extract-criteria.ts'),
+      timeout: Duration.seconds(60),
       environment: {
         TABLE_NAME: props.table.tableName,
         BEDROCK_MODEL_ID: props.config.bedrockModelId,
       },
-      bundling: { minify: true, sourceMap: true, externalModules: [] },
     });
     props.table.grantReadWriteData(extractCriteria);
-    extractCriteria.addToRolePolicy(
-      new PolicyStatement({
-        effect: Effect.ALLOW,
-        actions: ['bedrock:InvokeModel'],
-        resources: bedrockInvokeResources(props.config.bedrockModelId, this.region, this.account),
-      }),
-    );
+    grantBedrock(extractCriteria);
+
+    // Matching worker 2: grounded Score → code Verify → computed score → persist Match.
+    const scorePosting = nodeFunction(this, 'ScorePosting', {
+      entry: path.join(WORKERS_DIR, 'score-posting.ts'),
+      timeout: Duration.seconds(180),
+      environment: {
+        TABLE_NAME: props.table.tableName,
+        BEDROCK_MODEL_ID: props.config.bedrockModelId,
+      },
+    });
+    props.table.grantReadWriteData(scorePosting);
+    grantBedrock(scorePosting);
 
     const matching = new MatchingMachine(this, 'MatchingMachine', {
       table: props.table,
       extractCriteria,
+      scorePosting,
     });
-
-    const fn = new NodejsFunction(this, 'FastifyLith', {
-      entry: path.join(__dirname, '..', 'src', 'handler.ts'),
-      handler: 'handler',
-      runtime: Runtime.NODEJS_20_X,
-      architecture: Architecture.ARM_64,
-      environment: {
-        TABLE_NAME: props.table.tableName,
-        BUCKET_NAME: props.bucket.bucketName,
-        STATE_MACHINE_ARN: matching.stateMachine.stateMachineArn,
-      },
-      bundling: {
-        minify: true,
-        sourceMap: true,
-        // Bundle the AWS SDK v3 rather than relying on the Lambda runtime — the
-        // s3-request-presigner is not guaranteed to be runtime-provided.
-        externalModules: [],
-      },
-    });
-
-    props.table.grantReadWriteData(fn);
-    props.bucket.grantReadWrite(fn);
-    matching.stateMachine.grantStartExecution(fn);
+    matching.stateMachine.grantStartExecution(lith);
+    lith.addEnvironment('STATE_MACHINE_ARN', matching.stateMachine.stateMachineArn);
 
     const api = new HttpApi(this, 'HttpApi', {
-      defaultIntegration: new HttpLambdaIntegration('Lith', fn),
+      defaultIntegration: new HttpLambdaIntegration('Lith', lith),
       corsPreflight: props.config.allowedOrigins.length
         ? {
             allowOrigins: props.config.allowedOrigins,
@@ -101,36 +121,6 @@ export class ApiStack extends Stack {
 
     new CfnOutput(this, 'ApiUrl', { value: api.apiEndpoint });
 
-    // Async worker: parses an uploaded resume when S3 emits ObjectCreated.
-    const parseResume = new NodejsFunction(this, 'ParseResume', {
-      entry: path.join(__dirname, '..', 'src', 'workers', 'parse-resume.ts'),
-      handler: 'handler',
-      runtime: Runtime.NODEJS_20_X,
-      architecture: Architecture.ARM_64,
-      timeout: Duration.seconds(60),
-      memorySize: 512,
-      environment: {
-        TABLE_NAME: props.table.tableName,
-        BUCKET_NAME: props.bucket.bucketName,
-        BEDROCK_MODEL_ID: props.config.bedrockModelId,
-      },
-      bundling: {
-        minify: true,
-        sourceMap: true,
-        externalModules: [],
-      },
-    });
-
-    props.bucket.grantRead(parseResume);
-    props.table.grantWriteData(parseResume);
-    parseResume.addToRolePolicy(
-      new PolicyStatement({
-        effect: Effect.ALLOW,
-        actions: ['bedrock:InvokeModel'],
-        resources: bedrockInvokeResources(props.config.bedrockModelId, this.region, this.account),
-      }),
-    );
-
     new Rule(this, 'ResumeUploadedRule', {
       eventPattern: {
         source: ['aws.s3'],
@@ -143,6 +133,33 @@ export class ApiStack extends Stack {
       targets: [new LambdaFunction(parseResume)],
     });
   }
+}
+
+interface NodeFunctionOptions {
+  entry: string;
+  environment: Record<string, string>;
+  timeout?: Duration;
+  memorySize?: number;
+}
+
+// Shared defaults for every Node Lambda in this stack (Node 20, arm64, SDK bundled in).
+function nodeFunction(scope: Construct, id: string, opts: NodeFunctionOptions): NodejsFunction {
+  return new NodejsFunction(scope, id, {
+    entry: opts.entry,
+    handler: 'handler',
+    runtime: Runtime.NODEJS_20_X,
+    architecture: Architecture.ARM_64,
+    timeout: opts.timeout,
+    memorySize: opts.memorySize ?? 512,
+    environment: opts.environment,
+    bundling: {
+      minify: true,
+      sourceMap: true,
+      // Bundle the AWS SDK v3 rather than relying on the Lambda runtime — the
+      // s3-request-presigner is not guaranteed to be runtime-provided.
+      externalModules: [],
+    },
+  });
 }
 
 // Resource ARNs for bedrock:InvokeModel. A cross-region inference profile

@@ -68,6 +68,20 @@ export async function getPosting(runId: string, postingId: string): Promise<JobP
   return Item ? toPosting(Item) : null;
 }
 
+// The posting plus its extracted criteria in one read — the score worker needs both, and
+// they live on the same POSTING item. Null if the posting is missing or not yet enriched.
+export async function getPostingWithCriteria(
+  runId: string,
+  postingId: string,
+): Promise<{ posting: JobPosting; criteria: PostingCriteria } | null> {
+  const { Item } = await ddb.send(
+    new GetCommand({ TableName: TABLE_NAME, Key: keys.posting(runId, postingId) }),
+  );
+  const criteria = Item?.criteria as PostingCriteria | undefined;
+  if (!Item || !criteria) return null;
+  return { posting: toPosting(Item), criteria };
+}
+
 export async function saveCriteria(
   runId: string,
   postingId: string,
