@@ -42,6 +42,51 @@ inverting that row's polarity. Mitigation is prompt-level only today — a deter
 guard (or a post-check that flags suspected inversions) would harden it. A UX follow-up:
 surface low-confidence dealbreaker calls to the user rather than silently not-capping.
 
+## Surface run.failed in the UI
+
+The matching state machine records a per-run `failed` counter (`ADD failed :one` on the run
+item) each time a posting's chain is caught and skipped, so a run can land `done` with zero
+matches yet stay explainable. Nothing reads it back yet: `toRun` in `src/data/run.ts` doesn't
+project `failed`, the frontend `domain.ts` Run type has no `failed` field, and the results
+screen can't distinguish "all N postings errored" from "genuinely no fits". Coordinated
+frontend change: add `failed?` to Run, project it in `toRun`, and surface it (e.g. a banner
+when `failed > 0`).
+
+**Priority note (2026-07-04):** no longer hypothetical — run `ef588719` dropped a posting
+(the candidate's best match, a React/TS/RN role) with no signal to the user beyond the raw
+counter. Also: because the failure is *tolerated* (the Map iteration ends successfully via
+RecordFailure), Step Functions redrive can't recover the dropped posting — as far as SFN is
+concerned the run completed cleanly. Recovery today means a whole new run; the real fix is a
+"rescreen the failed ones" affordance keyed off `failed`. Write that down before it's forgotten.
+
+## Malformed Score output silently drops matches (callTool robustness)
+
+First production incident (run `ef588719`, 2026-07-04): one of three ScorePosting calls failed
+and its posting was dropped from the results. Cause pinned from the SFN history + Powertools
+logs — **not** throttling, `max_tokens`, or a Lambda timeout (execution ran 24s; a single
+TaskFailed with no retry cycle, and the error was `match scoring failed schema validation after
+retry`). Both `callTool` attempts returned the same Zod issues: `criteria` as a **string**
+(expected array) and `summary` **missing**. So the Score model intermittently emits malformed
+tool input; at temp ~0 it was stable-wrong within the run (both retries identical) but a fresh
+run scored the same posting fine. Observed rate so far: 1 of 6 Score calls — at N=50 that is
+several silent drops per run if it holds.
+
+Fix candidates, best placed in the shared `callTool` spine so every caller (structure /
+criteria / score) benefits:
+- **Self-correcting retry** — the retry re-sends the identical prompt today; feed the Zod error
+  back in ("your previous output had `criteria` as a string; return an array") so the model can
+  repair instead of repeating the mistake.
+- **Tolerant coercion** — if a field arrives as a JSON string, `JSON.parse` before validating.
+  Can't confirm this would have recovered the incident (see next).
+- **Log raw output on validation failure** — the WARN logs the Zod issues but not a preview of
+  the model's actual output, and carries no postingId/runId (had to correlate by time window +
+  SFN history). Add a truncated raw-output preview and a correlation id so the next incident is
+  diagnosable without guessing.
+- **Tighten the Score tool input JSON Schema** so `criteria`/`summary` are harder to violate.
+
+Orthogonal to prompt caching — caching cuts cost/latency but does nothing for output
+correctness; don't conflate the two.
+
 ## Tenure verification without explicit dates
 
 The Score model marks "5+ years X" as `not_met` when the résumé lists the skill but has
