@@ -79,7 +79,14 @@ export function scoreMatch(resumeText: string, criteria: PostingCriteria): Promi
     toolDescription: 'Emit the per-criterion scorecard for the résumé against the posting.',
     inputSchema: { json: TOOL_INPUT_SCHEMA },
     systemPrompt: SYSTEM_PROMPT,
-    userText: `Résumé:\n${resumeText}\n\nScreening criteria:\n${formatCriteria(criteria)}`,
+    // The résumé is identical for every posting in a run, so cache it (with the system prompt
+    // and tool schema ahead of it) and vary only the criteria after the checkpoint. Note:
+    // under concurrent fan-out (maxConcurrency 5) the first wave of a run all cache-WRITE in
+    // parallel — a ~25% premium, zero reads — which is expected cold-start, not breakage.
+    // Reads land on calls that start after a write completes: later postings when N exceeds
+    // the concurrency, or a second run for the same résumé within Bedrock's cache TTL.
+    cachePrefix: `Résumé:\n${resumeText}`,
+    userText: `Screening criteria:\n${formatCriteria(criteria)}`,
     label: 'match scoring',
     // Sized for the worst case (~20 criteria × verdict + reasoning + verbatim quote).
     maxTokens: 4096,
