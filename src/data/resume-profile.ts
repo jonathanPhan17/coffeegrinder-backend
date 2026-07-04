@@ -27,6 +27,15 @@ export async function getProfile(userId: string): Promise<ResumeProfile | null> 
   return Item ? toProfile(Item) : null;
 }
 
+// The raw résumé text (stored by the parse worker, stripped from the public ResumeProfile).
+// The matching pipeline needs it to ground and verify evidence quotes.
+export async function getResumeText(userId: string): Promise<string | null> {
+  const { Item } = await ddb.send(
+    new GetCommand({ TableName: TABLE_NAME, Key: keys.userProfile(userId) }),
+  );
+  return (Item?.rawText as string | undefined) ?? null;
+}
+
 export async function putPendingProfile(
   userId: string,
   input: { fileName: string; sizeKb: number; s3Key: string },
