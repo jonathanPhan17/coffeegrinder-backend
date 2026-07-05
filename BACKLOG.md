@@ -3,6 +3,18 @@
 Deferred items surfaced during implementation. Remove an entry once it's resolved —
 this file should only ever reflect what's still outstanding.
 
+## Mock → live cutover (paste flow)
+
+The frontend is still MOCK-backed (`endpoints.ts` `MOCK = true`). The backend already
+satisfies the run/matches contract, so the cutover is gated only on a **postings source** —
+NOT on Apify specifically. Shape of the cutover slice: build out the existing disabled
+"Paste · soon" control (`RunSetupForm.tsx`, `RunSource = 'auto' | 'paste'`) into a real paste
+tab that sends `postings[]` on `POST /runs`, then flip the run/matches endpoints
+(`startRun`/`getRun`/`listMatches`/`getMatch`) to the live client **per-endpoint**, leaving
+cover letters mocked (no §9.8 backend yet). That puts real end-to-end product use one small
+slice away; Apify (the `auto` source) is a later, independent source behind the same
+`JobSource` seam.
+
 ## parseFailed handling
 
 `ParseResume` worker throws on parse failure but there's no `parseFailed` state
