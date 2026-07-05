@@ -17,6 +17,7 @@ function toRun(item: Record<string, unknown>): Run {
     location: item.location as string | undefined,
     remote: item.remote as boolean | undefined,
     screened: item.screened as number | undefined,
+    failed: item.failed as number | undefined,
     createdAt: item.createdAt as string,
   };
 }
