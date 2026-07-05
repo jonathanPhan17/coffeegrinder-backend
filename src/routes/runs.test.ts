@@ -14,11 +14,10 @@ const posting = {
   description: 'Build things.',
 };
 
-// The postingIds the route handed to the state machine (the SFN input is a JSON payload).
-function startedPostingIds(): string[] {
+// The payload the route handed to the state machine (the SFN input is a JSON string).
+function startedPayload(): Record<string, unknown> {
   const [call] = sfnMock.commandCalls(StartExecutionCommand);
-  const payload = JSON.parse(call.args[0].input.input as string);
-  return payload.postingIds;
+  return JSON.parse(call.args[0].input.input as string);
 }
 
 describe('POST /runs', () => {
@@ -45,7 +44,7 @@ describe('POST /runs', () => {
     const body = res.json();
     expect(body.count).toBe(2); // …so run.count is overridden to what was actually stored.
     expect(body.screened).toBe(0);
-    expect(startedPostingIds()).toHaveLength(2);
+    expect(startedPayload().postingIds).toHaveLength(2);
     await app.close();
   });
 
@@ -58,20 +57,24 @@ describe('POST /runs', () => {
     });
 
     expect(res.json().count).toBe(1);
-    expect(startedPostingIds()).toHaveLength(1);
+    expect(startedPayload().postingIds).toHaveLength(1);
     await app.close();
   });
 
-  it('keeps the slider count for a query-only run and sends no postingIds', async () => {
+  it('takes the Apify path for a query-only run: no postingIds, sends query + limit', async () => {
     const app = buildApp();
     const res = await app.inject({
       method: 'POST',
       url: '/runs',
-      payload: { query: 'x', count: 20 },
+      payload: { query: 'backend', location: 'NYC', count: 20 },
     });
 
+    // run.count is the slider cap provisionally; the Fetch stage reconciles it to the
+    // fetched count. The machine's HasPostingIds Choice keys off postingIds being absent.
     expect(res.json().count).toBe(20);
-    expect(startedPostingIds()).toEqual([]);
+    const payload = startedPayload();
+    expect(payload.postingIds).toBeUndefined();
+    expect(payload).toMatchObject({ query: 'backend', location: 'NYC', limit: 20 });
     await app.close();
   });
 

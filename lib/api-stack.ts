@@ -44,6 +44,29 @@ export class ApiStack extends Stack {
       );
     };
 
+    // Read the Apify token SecureString and decrypt it. The decrypt grant is scoped to the
+    // AWS-managed SSM key via the ViaService condition (its per-account key id is not known at
+    // synth time), so only SSM can use it on the worker's behalf.
+    const grantApifyToken = (fn: NodejsFunction): void => {
+      fn.addToRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: ['ssm:GetParameter'],
+          resources: [
+            `arn:aws:ssm:${this.region}:${this.account}:parameter${props.config.apifyTokenParam}`,
+          ],
+        }),
+      );
+      fn.addToRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: ['kms:Decrypt'],
+          resources: ['*'],
+          conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } },
+        }),
+      );
+    };
+
     // The lith serves the HTTP API; it reads/writes the whole table, presigns uploads, and
     // starts matching runs.
     const lith = nodeFunction(this, 'FastifyLith', {
@@ -94,10 +117,42 @@ export class ApiStack extends Stack {
     props.table.grantReadWriteData(scorePosting);
     grantBedrock(scorePosting);
 
+    // Apify Fetch workers (§9.7): the state machine's Fetch stage runs these in a
+    // start → poll → collect loop. Only Start and Collect touch the table.
+    const apifyEnv = {
+      APIFY_TOKEN_PARAM: props.config.apifyTokenParam,
+      APIFY_ACTOR_ID: props.config.apifyActorId,
+    };
+    const startActorRun = nodeFunction(this, 'StartActorRun', {
+      entry: path.join(WORKERS_DIR, 'start-actor-run.ts'),
+      timeout: Duration.seconds(30),
+      environment: { TABLE_NAME: props.table.tableName, ...apifyEnv },
+    });
+    props.table.grantWriteData(startActorRun);
+    grantApifyToken(startActorRun);
+
+    const getActorStatus = nodeFunction(this, 'GetActorStatus', {
+      entry: path.join(WORKERS_DIR, 'get-actor-status.ts'),
+      timeout: Duration.seconds(15),
+      environment: apifyEnv,
+    });
+    grantApifyToken(getActorStatus);
+
+    const collectPostings = nodeFunction(this, 'CollectPostings', {
+      entry: path.join(WORKERS_DIR, 'collect-postings.ts'),
+      timeout: Duration.seconds(120),
+      environment: { TABLE_NAME: props.table.tableName, ...apifyEnv },
+    });
+    props.table.grantWriteData(collectPostings);
+    grantApifyToken(collectPostings);
+
     const matching = new MatchingMachine(this, 'MatchingMachine', {
       table: props.table,
       extractCriteria,
       scorePosting,
+      startActorRun,
+      getActorStatus,
+      collectPostings,
     });
     matching.stateMachine.grantStartExecution(lith);
     lith.addEnvironment('STATE_MACHINE_ARN', matching.stateMachine.stateMachineArn);

@@ -2,12 +2,16 @@ import { Duration } from 'aws-cdk-lib';
 import type { TableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import type { IFunction } from 'aws-cdk-lib/aws-lambda';
 import {
+  Choice,
+  Condition,
   DefinitionBody,
   JsonPath,
   Map as SfnMap,
   StateMachine,
   StateMachineType,
   type TaskStateBase,
+  Wait,
+  WaitTime,
 } from 'aws-cdk-lib/aws-stepfunctions';
 import {
   DynamoAttributeValue,
@@ -20,7 +24,20 @@ export interface MatchingMachineProps {
   table: TableV2;
   extractCriteria: IFunction;
   scorePosting: IFunction;
+  /** Apify Fetch stage (§9.7): start the actor, poll it, then collect + normalize the dataset. */
+  startActorRun: IFunction;
+  getActorStatus: IFunction;
+  collectPostings: IFunction;
 }
+
+// Poll cadence for the Apify actor run. 10s x 60 = a 10-minute ceiling before the guard trips
+// the run to SetError — generous for a <=50-item Indeed scrape, and Wait states are free.
+const POLL_INTERVAL_SECONDS = 10;
+const MAX_POLL_ATTEMPTS = 60;
+
+// Terminal non-success Apify run states — any of these means the scrape will not produce a
+// dataset, so the run fails outright rather than polling to the ceiling.
+const ACTOR_FAILURE_STATES = ['FAILED', 'ABORTED', 'TIMED-OUT'];
 
 // Throttling errors worth retrying — the dominant failure mode once the per-posting chain
 // fans out across the Map. Complements LambdaInvoke's built-in retrier (which already covers
@@ -115,7 +132,9 @@ export class MatchingMachine extends Construct {
 
     const perPosting = extractCriteria.next(scorePosting).next(incrementScreened);
 
-    // One iteration per postingId; empty array → zero iterations → SetDone.
+    // One iteration per postingId; empty array → zero iterations → SetDone. itemsPath is
+    // '$.postingIds' regardless of source: a pasted run arrives with it set, an Apify run has
+    // the Fetch stage write it via resultPath, so both converge on identical Map wiring.
     const mapPostings = new SfnMap(this, 'MapPostings', {
       itemsPath: '$.postingIds',
       itemSelector: {
@@ -129,7 +148,62 @@ export class MatchingMachine extends Construct {
     mapPostings.itemProcessor(perPosting);
     mapPostings.addCatch(setError, { resultPath: '$.error' });
 
-    const definition = setFetching.next(setScreening).next(mapPostings).next(setDone);
+    // Shared tail both source paths converge on: screen the postings, then finish.
+    const screeningTail = setScreening.next(mapPostings).next(setDone);
+
+    // Apify Fetch stage (§9.7). Start the actor (never retried — a retry would pay for a
+    // second run), then a Wait → GetStatus → Choice poll loop. `payloadResponseOnly` unwraps
+    // the Lambda return so it lands straight at resultPath.
+    const startActorRun = new LambdaInvoke(this, 'StartActorRun', {
+      lambdaFunction: props.startActorRun,
+      payloadResponseOnly: true,
+      resultPath: '$.actor',
+      retryOnServiceExceptions: false,
+    });
+    const getActorStatus = new LambdaInvoke(this, 'GetActorStatus', {
+      lambdaFunction: props.getActorStatus,
+      payloadResponseOnly: true,
+      resultPath: '$.actor',
+    });
+    const collectPostings = new LambdaInvoke(this, 'CollectPostings', {
+      lambdaFunction: props.collectPostings,
+      payloadResponseOnly: true,
+      resultPath: '$.postingIds',
+    });
+    for (const task of [startActorRun, getActorStatus, collectPostings]) {
+      task.addCatch(setError, { resultPath: '$.error' });
+    }
+
+    const waitForActor = new Wait(this, 'WaitForActor', {
+      time: WaitTime.duration(Duration.seconds(POLL_INTERVAL_SECONDS)),
+    });
+
+    // Route on the polled run state. Terminal failure and the attempts ceiling BOTH go to
+    // SetError — the guard's exhausted branch is explicit, never a silent hang; SUCCEEDED
+    // collects; anything else (RUNNING/READY) waits and polls again.
+    const actorDone = new Choice(this, 'ActorDone')
+      .when(
+        Condition.stringEquals('$.actor.status', 'SUCCEEDED'),
+        collectPostings.next(setScreening),
+      )
+      .when(
+        Condition.or(
+          ...ACTOR_FAILURE_STATES.map((s) => Condition.stringEquals('$.actor.status', s)),
+        ),
+        setError,
+      )
+      .when(Condition.numberGreaterThanEquals('$.actor.attempts', MAX_POLL_ATTEMPTS), setError)
+      .otherwise(waitForActor);
+
+    const fetchStage = setFetching
+      .next(startActorRun)
+      .next(waitForActor.next(getActorStatus).next(actorDone));
+
+    // Front Choice: pasted runs already carry postingIds → screen directly; Apify runs fetch
+    // first. The dormant 'fetching' status the contract always anticipated is finally used.
+    const definition = new Choice(this, 'HasPostingIds')
+      .when(Condition.isPresent('$.postingIds'), screeningTail)
+      .otherwise(fetchStage);
 
     this.stateMachine = new StateMachine(this, 'Resource', {
       definitionBody: DefinitionBody.fromChainable(definition),

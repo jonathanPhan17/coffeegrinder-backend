@@ -32,6 +32,9 @@ const definition = ((): string => {
     table,
     extractCriteria: lambda('Extract'),
     scorePosting: lambda('Score'),
+    startActorRun: lambda('StartActor'),
+    getActorStatus: lambda('GetActorStatus'),
+    collectPostings: lambda('CollectPostings'),
   });
   return joinedDefinition(Template.fromStack(stack));
 })();
@@ -42,7 +45,28 @@ describe('MatchingMachine', () => {
     expect(definition).toContain('"MaxConcurrency":5');
   });
 
-  it('no longer branches on a single posting with a Choice', () => {
-    expect(definition).not.toContain('"Type":"Choice"');
+  it('branches on source at the front: HasPostingIds skips Fetch for pasted runs', () => {
+    expect(definition).toContain('"HasPostingIds"');
+    expect(definition).toContain('"Type":"Choice"');
+    // Pasted runs (postingIds already present) go straight to screening.
+    expect(definition).toContain('"IsPresent":true');
+  });
+
+  it('runs the Apify Fetch stage as a Wait/poll loop with an attempts guard', () => {
+    expect(definition).toContain('"SetFetching"');
+    expect(definition).toContain('"StartActorRun"');
+    expect(definition).toContain('"Type":"Wait"');
+    expect(definition).toContain('"GetActorStatus"');
+    expect(definition).toContain('"CollectPostings"');
+    // The guard: too many polls trips to error rather than hanging.
+    expect(definition).toContain('"NumericGreaterThanEquals":60');
+  });
+
+  it('never auto-retries StartActorRun (a retry would pay for a second actor run)', () => {
+    // Only the throttle-retried Lambda tasks carry a Retry block; StartActorRun must not.
+    const startIdx = definition.indexOf('"StartActorRun"');
+    const waitIdx = definition.indexOf('"Type":"Wait"');
+    expect(startIdx).toBeGreaterThan(-1);
+    expect(definition.slice(startIdx, waitIdx)).not.toContain('"Retry"');
   });
 });

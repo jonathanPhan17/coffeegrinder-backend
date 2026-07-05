@@ -53,6 +53,44 @@ export async function getRun(userId: string, runId: string): Promise<Run | null>
   return Item ? toRun(Item) : null;
 }
 
+// Persist the Apify run id as soon as an actor is started, so a lost start response leaves a
+// breadcrumb to the (paid) run instead of an orphan. Written but not projected onto the Run
+// type — it is an operational field, not part of the §8 frontend contract.
+export async function saveApifyRunId(
+  userId: string,
+  runId: string,
+  apifyRunId: string,
+): Promise<void> {
+  await ddb.send(
+    new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: keys.run(userId, runId),
+      UpdateExpression: 'SET #apifyRunId = :apifyRunId',
+      ExpressionAttributeNames: { '#apifyRunId': 'apifyRunId' },
+      ExpressionAttributeValues: { ':apifyRunId': apifyRunId },
+    }),
+  );
+}
+
+// A niche query with count 50 may return only a handful of jobs, so run.count (set to the
+// slider cap before Fetch runs) goes stale. Reconcile it to the actually-fetched count once
+// postings are persisted, or the frontend's screened/count progress never reaches 100%.
+export async function reconcileRunCount(
+  userId: string,
+  runId: string,
+  count: number,
+): Promise<void> {
+  await ddb.send(
+    new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: keys.run(userId, runId),
+      UpdateExpression: 'SET #count = :count',
+      ExpressionAttributeNames: { '#count': 'count' },
+      ExpressionAttributeValues: { ':count': count },
+    }),
+  );
+}
+
 export async function putPosting(runId: string, posting: JobPosting): Promise<void> {
   await ddb.send(
     new PutCommand({

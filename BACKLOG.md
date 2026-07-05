@@ -94,6 +94,41 @@ Rate signal: filter `llm_validation_exhausted` by `label` for the true per-call-
 `llm_validation_retry` for the recoverable-flake rate. Orthogonal to prompt caching (cost /
 latency, not output correctness) — don't conflate the two.
 
+## Apify "no jobs found" empty state (frontend, coordinated)
+
+An Apify run whose query matches nothing lands `done` with `count: 0` (correct, and
+distinguishable from `error`). The backend is right; the risk is on the frontend results
+screen, which must render a "no jobs matched your search" empty state rather than a blank
+`0/0` progress bar or an empty results list. Pairs with the run.failed UI work and the
+mock->live cutover slice — pick it up when the results screen next gets touched.
+
+## Apify charge-then-save breadcrumb gap
+
+`StartActorRun` POSTs to Apify (starts a paid run), then `saveApifyRunId` persists the run id.
+If the save fails after the POST succeeds, a charged run has no breadcrumb on the run item.
+Inherent to any charge-then-record sequence and bounded by the per-run cost cap (one run's
+worth), so not actionable today — recorded so it is a known, accepted gap rather than a
+surprise. A real fix would need an idempotency/outbox layer, which is overkill at this scale.
+
+## Scraping -> official job-board API graduation path
+
+`ApifySource` (§9.7) scrapes Indeed via the misceres/indeed-scraper actor. For personal use
+this is low-risk, but **serving scraped job data to third-party users raises ToS exposure**
+(Apify owns the proxy/anti-bot layer, yet redistribution is a different question than personal
+scraping). If Coffeegrinder gets real external-user traction, make it a conscious decision to
+move to official job-board APIs / partnerships rather than scraped data. Gate this on the same
+external-user milestone as Cognito + quotas. Noting now so it is deliberate later, not a
+surprise.
+
+## Cross-run dedup / caching of fetched postings
+
+Deferred from the Apify slice. `sourceId` is Indeed's stable job id (not a random UUID), so the
+groundwork for dedup is in place: the same posting fetched in two runs shares an id. At
+multi-user scale, caching identical-query results for a short window avoids paying Apify twice
+for the same search. Keep deferred until there is more than one user — tie it to the same
+Cognito + quotas external-user gate as the API-graduation item above. Not worth building for a
+single-user app.
+
 ## Tenure verification without explicit dates
 
 The Score model marks "5+ years X" as `not_met` when the résumé lists the skill but has
