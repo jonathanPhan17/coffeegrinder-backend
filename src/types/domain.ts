@@ -37,6 +37,8 @@ export interface Run {
   location?: string;
   remote?: boolean;
   screened?: number;
+  /** Postings whose scoring chain failed and was skipped (state machine ADDs this). */
+  failed?: number;
   createdAt: string;
 }
 
