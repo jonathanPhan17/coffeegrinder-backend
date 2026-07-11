@@ -35,7 +35,7 @@ instead of *many patients vs. one trial's criteria*, it is *one resume vs. many 
 | Frontend hosting   | S3 + CloudFront (or Vercel)                                            |
 | API                | API Gateway (HTTP API) + Lambda (TypeScript, Fastify)                  |
 | Async triggers     | **EventBridge** (S3 object-created -> workers; keeps cross-stack deps one-directional) |
-| Async pipeline     | **AWS Step Functions** (Fetch -> Distributed Map -> Persist)          |
+| Async pipeline     | **AWS Step Functions** (Fetch -> inline Map -> Persist; §9.5)         |
 | AI                 | **Amazon Bedrock** — Claude Sonnet, one grounded scorecard call per posting (Converse API + tool-use JSON, prompt caching) |
 | Data               | **DynamoDB** (single-table) + **S3** (resume files)                   |
 | Lambda tooling     | Powertools for AWS Lambda (TS) — structured logs/tracing/metrics; Zod at LLM boundaries |
@@ -62,7 +62,7 @@ end-to-end *sequence* is narrated in §4.
 | **API** | API Gateway (HTTP API) → Lambda (TS, Fastify) | Frontend | Presigns S3 uploads · starts Step Functions runs · reads/writes DynamoDB |
 | **Resume bucket** | S3 | API (presigned `PUT`) | Emits `ObjectCreated` → EventBridge |
 | **Parse worker** | Lambda (`pdf-parse`) | EventBridge S3 object-created, `resumes/` prefix | Reads the S3 object · writes extracted text to the profile (DynamoDB) |
-| **Matching pipeline** | Step Functions — Fetch → Distributed Map → Persist | `POST /runs`, via the API | Fetches from Apify · per posting: Score (Bedrock) + Verify (in code) · writes scored matches to DynamoDB |
+| **Matching pipeline** | Step Functions — Fetch → inline Map → Persist (§9.5) | `POST /runs`, via the API | Fetches from Apify · per posting: Score (Bedrock) + Verify (in code) · writes scored matches to DynamoDB |
 | **AI** | Amazon Bedrock — Claude Sonnet, tool-use JSON | Distributed Map (Score) · cover-letter Lambda | Returns strict-JSON scorecards / letter text |
 | **Job ingestion** | Apify REST API (behind `JobSource`) | Step Functions Fetch state | Returns normalized postings (§6) |
 | **Data** | DynamoDB (single table) | API · workers · Step Functions | Profiles · runs · postings · matches · evidence · letters (§7) |
@@ -78,7 +78,7 @@ VPC endpoints (see §2).*
 
 1. **Upload** — User uploads a resume PDF via a presigned URL to **S3**. An **EventBridge
    rule** (S3 object-created, `resumes/` prefix) triggers a parse Lambda that extracts text
-   with `pdf-parse` (fallback: `unpdf`) and stores it on the profile in DynamoDB. The
+   with `pdf-parse` and stores it on the profile in DynamoDB. The
    profile write is conditional on the event's S3 key matching the profile's current key,
    so stale/duplicate events are no-ops. Textract was considered and rejected: resumes are
    digital-native PDFs (no OCR needed) and the text feeds an LLM that tolerates rough layout.
@@ -88,11 +88,14 @@ VPC endpoints (see §2).*
 2. **Run** — User picks **N** (e.g. "match me against 20 jobs") + search terms and hits Go.
    `POST /runs` starts a **Step Functions** execution and returns a `runId`. The frontend
    polls `GET /runs/{id}` for status.
-3. **Fetch** — Step 1 of the state machine calls **Apify**, waits for the run to complete
-   (webhook callback), normalizes the results into the standard posting shape (§6),
-   and writes N posting rows.
-4. **Match (fan-out)** — A **Distributed Map** runs the scorecard evaluation (§5) on all N
-   postings in parallel with a capped concurrency.
+3. **Fetch** — When the run has no pasted postings, the state machine starts an **Apify**
+   actor run and **polls it to completion** (StartActorRun → Wait → GetActorStatus → a
+   Choice that loops until the run succeeds, fails, or an attempts guard trips), then
+   collects the dataset, normalizes it into the standard posting shape (§6), and writes the
+   posting rows. (Poll loop, not a webhook — the run stays inside one Step Functions
+   execution with no public callback endpoint to expose; see §9.7.)
+4. **Match (fan-out)** — An **inline Map** (`maxConcurrency: 5`) runs the scorecard
+   evaluation (§5) on all N postings in parallel with a capped concurrency (§9.5).
 5. **Results** — Scored matches are written to DynamoDB; the UI lists them **sorted, best
    first**, each with a **% score** and an expandable **scorecard**.
 6. **Act** — Per result: **Apply** (deep-links to the original posting URL) and
@@ -243,6 +246,14 @@ Implementations:
 
 **V2 — makes it feel like a product:**
 7. `ApifySource` (real fetched jobs).
+   *Built + live-proven. Because an Apify run outlasts the API Gateway 29s timeout, the
+   fetch is **not** a synchronous `JobSource.fetch()` — it is an async stage inside the
+   state machine: `resolveSource` picks pasted-vs-Apify by whether the request carried
+   `postings[]`, then a poll loop (StartActorRun → Wait → GetActorStatus → Choice, capped
+   by an attempts guard) drives the actor run to completion before collect + normalize.
+   Token in SSM SecureString; two-tier Zod trust boundary (bad row dropped, bad dataset
+   fails the run); `retryOnServiceExceptions:false` + immediate `saveApifyRunId` guard the
+   double-charge. `PastedSource` remains the synchronous `JobSource` for local dev.*
 8. AI cover-letter / email drafting, tailored + saved.
 9. Pipeline board with manual status.
 
