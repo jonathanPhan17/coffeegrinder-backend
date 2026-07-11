@@ -5,7 +5,8 @@ import { getRun, putPosting, putRun } from '../data/run';
 import { DEFAULT_USER_ID } from '../shared/constants';
 import { startRunExecution } from '../shared/sfn';
 import { PastedSource } from '../sources/pasted';
-import type { JobPosting, Run } from '../types/domain';
+import { resolveSource } from '../sources/resolve';
+import type { Run } from '../types/domain';
 
 const pastedPostingSchema = z.object({
   title: z.string(),
@@ -36,19 +37,27 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid run request', issues: parsed.error.issues });
     }
-    const { query, location, remote, count, postings } = parsed.data;
+    const { query, location, remote, count } = parsed.data;
+    const source = resolveSource(parsed.data);
+    const runId = randomUUID();
 
-    // Normalize pasted JDs up front (capped at `count`) so the stored run.count reflects the
-    // fan-out that will actually run. The frontend divides screened/count for progress, so a
-    // pasted run of fewer-than-slider postings still reaches 100%.
-    const normalized: JobPosting[] = postings
-      ? await new PastedSource(postings).fetch({ query, location, limit: count })
-      : [];
+    // Pasted runs normalize + persist up front (capped at `count`), so run.count is exact and
+    // the machine can skip straight to screening. Apify runs carry only the search terms:
+    // run.count is the slider cap provisionally, and the Fetch stage reconciles it to the
+    // actually-fetched count (reconcileRunCount) so screened/count still reaches 100%.
+    let runCount = count;
+    let postingIds: string[] | undefined;
+    if (source.kind === 'pasted') {
+      const normalized = await new PastedSource(source.postings).fetch({ query, location, limit: count });
+      await Promise.all(normalized.map((posting) => putPosting(runId, posting)));
+      postingIds = normalized.map((posting) => posting.sourceId);
+      runCount = normalized.length;
+    }
 
     const run: Run = {
-      id: randomUUID(),
+      id: runId,
       status: 'queued',
-      count: postings ? normalized.length : count,
+      count: runCount,
       query,
       location,
       remote,
@@ -57,13 +66,12 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
     };
     await putRun(DEFAULT_USER_ID, run);
 
-    // Store every posting before kickoff so the machine's ExtractCriteria can read them.
-    await Promise.all(normalized.map((posting) => putPosting(run.id, posting)));
-    const postingIds = normalized.map((posting) => posting.sourceId);
-
     await startRunExecution({
-      name: run.id,
-      payload: { userId: DEFAULT_USER_ID, runId: run.id, postingIds },
+      name: runId,
+      payload:
+        postingIds !== undefined
+          ? { userId: DEFAULT_USER_ID, runId, postingIds }
+          : { userId: DEFAULT_USER_ID, runId, query, limit: count, ...(location ? { location } : {}) },
     });
 
     return reply.code(201).send(run);

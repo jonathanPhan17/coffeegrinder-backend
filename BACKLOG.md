@@ -3,17 +3,19 @@
 Deferred items surfaced during implementation. Remove an entry once it's resolved —
 this file should only ever reflect what's still outstanding.
 
-## Mock → live cutover (paste flow)
+## Mock → live cutover (auto/Apify flow)
 
-The frontend is still MOCK-backed (`endpoints.ts` `MOCK = true`). The backend already
-satisfies the run/matches contract, so the cutover is gated only on a **postings source** —
-NOT on Apify specifically. Shape of the cutover slice: build out the existing disabled
-"Paste · soon" control (`RunSetupForm.tsx`, `RunSource = 'auto' | 'paste'`) into a real paste
-tab that sends `postings[]` on `POST /runs`, then flip the run/matches endpoints
+The frontend is still MOCK-backed (`endpoints.ts` `MOCK = true`). The backend now serves the
+full auto-fetch loop end-to-end: **`ApifySource` (§9.7) is live and field-proven**, so the
+`auto` source needs no more backend work. Shape of the cutover slice: point the app at the
+live API (`VITE_API_URL`) and flip the run/matches endpoints
 (`startRun`/`getRun`/`listMatches`/`getMatch`) to the live client **per-endpoint**, leaving
-cover letters mocked (no §9.8 backend yet). That puts real end-to-end product use one small
-slice away; Apify (the `auto` source) is a later, independent source behind the same
-`JobSource` seam.
+`updateMatchStatus` (no PATCH route) and cover letters (no §9.8 backend) mocked; delete the
+client-side run-simulation block. The one behavioural gap to fix in the same slice:
+`RunStatusPage` handles query `isError` but not `run.status === 'error'`, so a live run that
+fails would freeze on the progress bars. Spec-first, cross-repo (frontend repo). The **paste
+tab** (build out the disabled "Paste · soon" control in `RunSetupForm.tsx` to send `postings[]`)
+is a separate, still-deferred source behind the same seam — not part of this cutover.
 
 ## parseFailed handling
 
@@ -93,6 +95,41 @@ correction → model recovered). Re-run that harness (`npm run signoff:calltool`
 Rate signal: filter `llm_validation_exhausted` by `label` for the true per-call-site drop rate,
 `llm_validation_retry` for the recoverable-flake rate. Orthogonal to prompt caching (cost /
 latency, not output correctness) — don't conflate the two.
+
+## Apify "no jobs found" empty state (frontend, coordinated)
+
+An Apify run whose query matches nothing lands `done` with `count: 0` (correct, and
+distinguishable from `error`). The backend is right; the risk is on the frontend results
+screen, which must render a "no jobs matched your search" empty state rather than a blank
+`0/0` progress bar or an empty results list. Pairs with the run.failed UI work and the
+mock->live cutover slice — pick it up when the results screen next gets touched.
+
+## Apify charge-then-save breadcrumb gap
+
+`StartActorRun` POSTs to Apify (starts a paid run), then `saveApifyRunId` persists the run id.
+If the save fails after the POST succeeds, a charged run has no breadcrumb on the run item.
+Inherent to any charge-then-record sequence and bounded by the per-run cost cap (one run's
+worth), so not actionable today — recorded so it is a known, accepted gap rather than a
+surprise. A real fix would need an idempotency/outbox layer, which is overkill at this scale.
+
+## Scraping -> official job-board API graduation path
+
+`ApifySource` (§9.7) scrapes Indeed via the misceres/indeed-scraper actor. For personal use
+this is low-risk, but **serving scraped job data to third-party users raises ToS exposure**
+(Apify owns the proxy/anti-bot layer, yet redistribution is a different question than personal
+scraping). If Coffeegrinder gets real external-user traction, make it a conscious decision to
+move to official job-board APIs / partnerships rather than scraped data. Gate this on the same
+external-user milestone as Cognito + quotas. Noting now so it is deliberate later, not a
+surprise.
+
+## Cross-run dedup / caching of fetched postings
+
+Deferred from the Apify slice. `sourceId` is Indeed's stable job id (not a random UUID), so the
+groundwork for dedup is in place: the same posting fetched in two runs shares an id. At
+multi-user scale, caching identical-query results for a short window avoids paying Apify twice
+for the same search. Keep deferred until there is more than one user — tie it to the same
+Cognito + quotas external-user gate as the API-graduation item above. Not worth building for a
+single-user app.
 
 ## Tenure verification without explicit dates
 
