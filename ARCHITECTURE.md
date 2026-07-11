@@ -39,7 +39,7 @@ instead of *many patients vs. one trial's criteria*, it is *one resume vs. many 
 | AI                 | **Amazon Bedrock** — Claude Sonnet, one grounded scorecard call per posting (Converse API + tool-use JSON, prompt caching) |
 | Data               | **DynamoDB** (single-table) + **S3** (resume files)                   |
 | Lambda tooling     | Powertools for AWS Lambda (TS) — structured logs/tracing/metrics; Zod at LLM boundaries |
-| Testing            | Vitest + aws-sdk-client-mock                                           |
+| Testing            | Vitest + aws-sdk-client-mock; CDK assertions for infra invariants (retention, IAM posture, machine graph) |
 | Job ingestion      | **Apify** (managed scraping API) behind a swappable `JobSource`        |
 | Auth               | Amazon Cognito (added later)                                           |
 | Notifications      | EventBridge Scheduler + Gmail API (stretch / V3)                      |
