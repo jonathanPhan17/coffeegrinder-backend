@@ -15,8 +15,10 @@ interface ScorePostingEvent {
 
 const MAX_FABRICATED_FRACTION = 1 / 3;
 
-// Step Functions task: grounded Score → deterministic Verify → code-computed score →
-// persist the Match. Throws on missing inputs; Step Functions catches it to SetError.
+/**
+ * Step Functions task: grounded Score → deterministic Verify → code-computed score →
+ * persist the Match. Throws on missing inputs; Step Functions catches it to SetError.
+ */
 export async function handler(event: ScorePostingEvent): Promise<void> {
   const [inputs, resumeText] = await Promise.all([
     getPostingWithCriteria(event.runId, event.postingId),

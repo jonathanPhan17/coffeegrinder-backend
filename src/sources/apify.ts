@@ -8,8 +8,10 @@ import type { JobPosting } from '../types/domain';
 // collect). This module owns the two ends the machine touches: the actor INPUT it starts with,
 // and the OUTPUT normalization/validation when the run finishes.
 
-// misceres/indeed-scraper input (only the fields we set). `maxItemsPerSearch` is the cost cap
-// — it bounds both the scrape spend and the downstream Bedrock fan-out.
+/**
+ * misceres/indeed-scraper input (only the fields we set). `maxItemsPerSearch` is the cost cap
+ * — it bounds both the scrape spend and the downstream Bedrock fan-out.
+ */
 export function buildIndeedInput(input: {
   query: string;
   location?: string;
@@ -24,10 +26,12 @@ export function buildIndeedInput(input: {
   };
 }
 
-// One scraped row we can actually screen. The required fields are exactly what ExtractCriteria
-// and Score depend on; `url` is Indeed's always-present posting link (NOT externalApplyLink,
-// which needs followApplyRedirects and is often absent). A row missing any required field is an
-// expected partial scrape result — dropped, not fatal (see normalizeIndeedItems).
+/**
+ * One scraped row we can actually screen. The required fields are exactly what ExtractCriteria
+ * and Score depend on; `url` is Indeed's always-present posting link (NOT externalApplyLink,
+ * which needs followApplyRedirects and is often absent). A row missing any required field is an
+ * expected partial scrape result — dropped, not fatal (see normalizeIndeedItems).
+ */
 const indeedRowSchema = z.object({
   id: z.string().min(1),
   positionName: z.string().min(1),
@@ -37,10 +41,12 @@ const indeedRowSchema = z.object({
   location: z.string().optional(),
 });
 
-// The dataset as a whole must be an array of rows. A non-array (an error envelope, or the actor
-// changing its output contract) is NOT a bad row — it is a run-level failure. Kept deliberately
-// separate from the per-row check so the two trust-boundary failures get two responses:
-// bad row → drop + log; bad dataset → throw → run status `error`.
+/**
+ * The dataset as a whole must be an array of rows. A non-array (an error envelope, or the actor
+ * changing its output contract) is NOT a bad row — it is a run-level failure. Kept deliberately
+ * separate from the per-row check so the two trust-boundary failures get two responses:
+ * bad row → drop + log; bad dataset → throw → run status `error`.
+ */
 const datasetSchema = z.array(z.unknown());
 
 export function normalizeIndeedItems(items: unknown): JobPosting[] {

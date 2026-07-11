@@ -9,8 +9,10 @@ export interface ResumeBucketProps {
   autoDeleteObjects: boolean;
 }
 
-// Private resume bucket. CORS is scoped to the frontend origin so the browser
-// can PUT directly against a presigned URL (upload flow, added later).
+/**
+ * Private resume bucket. CORS is scoped to the frontend origin so the browser
+ * can PUT directly against a presigned URL (upload flow, added later).
+ */
 export class ResumeBucket extends Construct {
   readonly bucket: Bucket;
 

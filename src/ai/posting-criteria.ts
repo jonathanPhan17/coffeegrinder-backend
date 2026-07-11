@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { callTool } from './tool-call';
 
-// Structured screening criteria distilled from a job posting (§5). Internal shape (not
-// part of the frontend contract); Zod is the trust boundary for the LLM output.
+/**
+ * Structured screening criteria distilled from a job posting (§5). Internal shape (not
+ * part of the frontend contract); Zod is the trust boundary for the LLM output.
+ */
 export const PostingCriteriaSchema = z.object({
   must_haves: z.array(z.string()),
   nice_to_haves: z.array(z.string()),

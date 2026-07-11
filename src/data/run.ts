@@ -53,9 +53,11 @@ export async function getRun(userId: string, runId: string): Promise<Run | null>
   return Item ? toRun(Item) : null;
 }
 
-// Persist the Apify run id as soon as an actor is started, so a lost start response leaves a
-// breadcrumb to the (paid) run instead of an orphan. Written but not projected onto the Run
-// type — it is an operational field, not part of the §8 frontend contract.
+/**
+ * Persist the Apify run id as soon as an actor is started, so a lost start response leaves a
+ * breadcrumb to the (paid) run instead of an orphan. Written but not projected onto the Run
+ * type — it is an operational field, not part of the §8 frontend contract.
+ */
 export async function saveApifyRunId(
   userId: string,
   runId: string,
@@ -72,9 +74,11 @@ export async function saveApifyRunId(
   );
 }
 
-// A niche query with count 50 may return only a handful of jobs, so run.count (set to the
-// slider cap before Fetch runs) goes stale. Reconcile it to the actually-fetched count once
-// postings are persisted, or the frontend's screened/count progress never reaches 100%.
+/**
+ * A niche query with count 50 may return only a handful of jobs, so run.count (set to the
+ * slider cap before Fetch runs) goes stale. Reconcile it to the actually-fetched count once
+ * postings are persisted, or the frontend's screened/count progress never reaches 100%.
+ */
 export async function reconcileRunCount(
   userId: string,
   runId: string,
@@ -107,8 +111,10 @@ export async function getPosting(runId: string, postingId: string): Promise<JobP
   return Item ? toPosting(Item) : null;
 }
 
-// The posting plus its extracted criteria in one read — the score worker needs both, and
-// they live on the same POSTING item. Null if the posting is missing or not yet enriched.
+/**
+ * The posting plus its extracted criteria in one read — the score worker needs both, and
+ * they live on the same POSTING item. Null if the posting is missing or not yet enriched.
+ */
 export async function getPostingWithCriteria(
   runId: string,
   postingId: string,

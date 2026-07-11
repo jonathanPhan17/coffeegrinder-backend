@@ -7,9 +7,11 @@ export interface SingleTableProps {
   pointInTimeRecovery: boolean;
 }
 
-// Single-table design (ARCHITECTURE.md §7): generic PK/SK hold every entity
-// type. GSI1 is an overloaded index — each entity encodes its own access
-// pattern into GSI1PK/GSI1SK (first use: the pipeline board, matches by status).
+/**
+ * Single-table design (ARCHITECTURE.md §7): generic PK/SK hold every entity
+ * type. GSI1 is an overloaded index — each entity encodes its own access
+ * pattern into GSI1PK/GSI1SK (first use: the pipeline board, matches by status).
+ */
 export class SingleTable extends Construct {
   readonly table: TableV2;
 

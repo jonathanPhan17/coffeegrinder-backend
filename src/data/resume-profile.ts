@@ -27,8 +27,10 @@ export async function getProfile(userId: string): Promise<ResumeProfile | null> 
   return Item ? toProfile(Item) : null;
 }
 
-// The raw résumé text (stored by the parse worker, stripped from the public ResumeProfile).
-// The matching pipeline needs it to ground and verify evidence quotes.
+/**
+ * The raw résumé text (stored by the parse worker, stripped from the public ResumeProfile).
+ * The matching pipeline needs it to ground and verify evidence quotes.
+ */
 export async function getResumeText(userId: string): Promise<string | null> {
   const { Item } = await ddb.send(
     new GetCommand({ TableName: TABLE_NAME, Key: keys.userProfile(userId) }),
@@ -61,11 +63,13 @@ export async function putPendingProfile(
   return profile;
 }
 
-// Records parse + structure results, but only if the profile still points at the
-// object the event was for — guards the re-upload race (EventBridge is at-least-once,
-// and a stale event must not stamp old data over a newer upload). One atomic write
-// flips parsed:true together with the structured fields, so a reader never sees
-// parsed:true over an empty profile. Returns false on the stale no-op.
+/**
+ * Records parse + structure results, but only if the profile still points at the
+ * object the event was for — guards the re-upload race (EventBridge is at-least-once,
+ * and a stale event must not stamp old data over a newer upload). One atomic write
+ * flips parsed:true together with the structured fields, so a reader never sees
+ * parsed:true over an empty profile. Returns false on the stale no-op.
+ */
 export async function saveParsedProfile(
   userId: string,
   input: {

@@ -16,3 +16,16 @@ BOTH: a §9 note that contradicts the design sections above it is itself the dri
 how the "Distributed Map" and "webhook" lines went stale after we shipped the inline Map and
 the Apify poll loop). After shipping, ask "what did I just make untrue?" and grep the doc for
 it.
+
+Comments come in two registers, and the register must match the audience. Use JSDoc
+(`/** ... */`) for the consumer-facing contract — put it directly above an exported (or
+module-level) function, class, type, interface, or schema so it surfaces in IDE hover: what
+it is, params/units, return shape, architectural summary. Use inline `//` inside a body for
+the maintainer-facing why — the non-obvious hazards (billing traps like "never retried, would
+pay for a second run", IAM-scope justifications, concurrency races, timeout/cross-stack
+coupling, the "why this value" behind a constant). Cut the property-echo: a comment that just
+English-translates the code it sits on (`// create the bucket`, restating `versioned: true`)
+is noise — delete it, or if it is a real architectural summary on an export, promote it to
+JSDoc rather than dropping it. When a change alters behavior a comment describes (a cache
+percentage, "at-least-once", a timeout), the comment rides in the same diff — a stale comment
+is drift, same as a stale doc.

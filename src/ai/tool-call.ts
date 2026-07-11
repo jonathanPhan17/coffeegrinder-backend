@@ -48,11 +48,13 @@ interface AttemptResult {
   usage: TokenUsage | undefined;
 }
 
-// The shared spine for every structured LLM extraction (resume profile, posting criteria,
-// match scorecard): one grounded Bedrock call via forced tool-use, Zod-validated. On a failed
-// attempt it logs a decision-grade entry (raw input, issues, stopReason, usage) and, if
-// attempts remain, continues the conversation with the validation error so the model can
-// repair in-context. Throws after the last attempt so callers surface failure.
+/**
+ * The shared spine for every structured LLM extraction (resume profile, posting criteria,
+ * match scorecard): one grounded Bedrock call via forced tool-use, Zod-validated. On a failed
+ * attempt it logs a decision-grade entry (raw input, issues, stopReason, usage) and, if
+ * attempts remain, continues the conversation with the validation error so the model can
+ * repair in-context. Throws after the last attempt so callers surface failure.
+ */
 export async function callTool<T>(schema: ZodType<T>, spec: ToolCallSpec): Promise<T> {
   // First turn carries the cached prefix + checkpoint (when set); the retry path spreads it
   // unchanged, so corrections read the same warm cache.
@@ -126,9 +128,11 @@ async function invokeTool(spec: ToolCallSpec, messages: Message[]): Promise<Atte
   };
 }
 
-// The initial user turn: the cached prefix + checkpoint (when set), then the variable text.
-// Shared by the first call and the correction fallback so both build the exact same shape —
-// a fallback that dropped the prefix would retry a Score call without the résumé.
+/**
+ * The initial user turn: the cached prefix + checkpoint (when set), then the variable text.
+ * Shared by the first call and the correction fallback so both build the exact same shape —
+ * a fallback that dropped the prefix would retry a Score call without the résumé.
+ */
 function userTurn(spec: ToolCallSpec, text: string): Message {
   const content: ContentBlock[] = spec.cachePrefix
     ? [{ text: spec.cachePrefix }, { cachePoint: { type: 'default' } }, { text }]
@@ -136,7 +140,7 @@ function userTurn(spec: ToolCallSpec, text: string): Message {
   return { role: 'user', content };
 }
 
-// Build the next request that asks the model to fix its previous output.
+/** Build the next request that asks the model to fix its previous output. */
 function withCorrection(
   messages: Message[],
   res: AttemptResult,

@@ -10,8 +10,10 @@ export interface DataStackProps extends StackProps {
   config: EnvConfig;
 }
 
-// Stateful layer: single-table DynamoDB + resume S3 bucket. Exposed via props
-// (never globals) for the ApiStack to consume.
+/**
+ * Stateful layer: single-table DynamoDB + resume S3 bucket. Exposed via props
+ * (never globals) for the ApiStack to consume.
+ */
 export class DataStack extends Stack {
   readonly table: TableV2;
   readonly bucket: Bucket;

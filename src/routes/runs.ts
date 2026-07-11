@@ -17,9 +17,11 @@ const pastedPostingSchema = z.object({
   remote: z.boolean().optional(),
 });
 
-// Matches the shipped frontend contract (startRun): { query, location?, remote?, count }.
-// `postings` is an optional extra for curl testing and the future paste tab — an array so a
-// single run can screen several pasted JDs (Apify will later populate the same fan-out).
+/**
+ * Matches the shipped frontend contract (startRun): { query, location?, remote?, count }.
+ * `postings` is an optional extra for curl testing and the future paste tab — an array so a
+ * single run can screen several pasted JDs (Apify will later populate the same fan-out).
+ */
 const createRunSchema = z.object({
   query: z.string(),
   location: z.string().optional(),

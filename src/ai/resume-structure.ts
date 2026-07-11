@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { callTool } from './tool-call';
 
-// The structured, AI-owned subset of ResumeProfile (§8 contract). Zod is the trust
-// boundary for the LLM output — nothing reaches DynamoDB unvalidated.
+/**
+ * The structured, AI-owned subset of ResumeProfile (§8 contract). Zod is the trust
+ * boundary for the LLM output — nothing reaches DynamoDB unvalidated.
+ */
 export const StructuredProfileSchema = z.object({
   targetRole: z.string(),
   experience: z.string(),

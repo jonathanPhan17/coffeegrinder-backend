@@ -8,9 +8,11 @@ interface ExtractCriteriaEvent {
   postingId: string;
 }
 
-// Step Functions task: JD text → structured screening criteria, persisted on the posting.
-// Throws on a missing posting or an unparseable model response; Step Functions catches it
-// and routes the run to SetError.
+/**
+ * Step Functions task: JD text → structured screening criteria, persisted on the posting.
+ * Throws on a missing posting or an unparseable model response; Step Functions catches it
+ * and routes the run to SetError.
+ */
 export async function handler(event: ExtractCriteriaEvent): Promise<void> {
   const posting = await getPosting(event.runId, event.postingId);
   if (!posting) {

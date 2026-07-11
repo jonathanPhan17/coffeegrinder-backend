@@ -45,9 +45,11 @@ interface RunEnvelope {
   data: { id: string; defaultDatasetId: string; status: string };
 }
 
-// Start an actor run (async — returns immediately with the run id + its dataset id). We never
-// use the run-sync-get-dataset-items endpoint: it holds the connection open for the whole
-// scrape, which would pin this Lambda for minutes.
+/**
+ * Start an actor run (async — returns immediately with the run id + its dataset id). We never
+ * use the run-sync-get-dataset-items endpoint: it holds the connection open for the whole
+ * scrape, which would pin this Lambda for minutes.
+ */
 export async function startActorRun(
   actorId: string,
   input: Record<string, unknown>,
@@ -75,8 +77,10 @@ export async function getActorRunStatus(
   return { status: data.status, datasetId: data.defaultDatasetId };
 }
 
-// The dataset items are the scraped rows. `clean=true` drops Apify's hidden/empty rows;
-// normalization + validation happens in the caller (src/sources/apify.ts).
+/**
+ * The dataset items are the scraped rows. `clean=true` drops Apify's hidden/empty rows;
+ * normalization + validation happens in the caller (src/sources/apify.ts).
+ */
 export async function getDatasetItems(datasetId: string, token: string): Promise<unknown> {
   return apifyGet<unknown>(`/datasets/${datasetId}/items?clean=true&format=json`, token);
 }

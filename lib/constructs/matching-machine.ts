@@ -45,15 +45,17 @@ const ACTOR_FAILURE_STATES = ['FAILED', 'ABORTED', 'TIMED-OUT'];
 // (ThrottlingException) and the Lambda invoke throttle it omits.
 const THROTTLE_ERRORS = ['ThrottlingException', 'Lambda.TooManyRequestsException'];
 
-// The matching pipeline as a Step Functions state machine. Run-status transitions are
-// DynamoDB UpdateItem service integrations (no Lambda); the per-posting work (extract
-// criteria → score → verify → persist) runs as Lambda tasks inside an inline Map over the
-// run's postingIds, capped at maxConcurrency 5. An empty postingIds array (a query-only
-// skeleton run) runs zero iterations and falls straight through to SetDone. A single
-// posting's failure is caught, counted on the run's `failed`, and skipped so it can't sink
-// the whole run; each success bumps the run's `screened` for live progress.
-// Inline Map (not the Distributed Map named in §9.5) is the right tool for N ≤ 50 — see
-// ARCHITECTURE.md §9 phase 5 for the deviation and the swap trigger.
+/**
+ * The matching pipeline as a Step Functions state machine. Run-status transitions are
+ * DynamoDB UpdateItem service integrations (no Lambda); the per-posting work (extract
+ * criteria → score → verify → persist) runs as Lambda tasks inside an inline Map over the
+ * run's postingIds, capped at maxConcurrency 5. An empty postingIds array (a query-only
+ * skeleton run) runs zero iterations and falls straight through to SetDone. A single
+ * posting's failure is caught, counted on the run's `failed`, and skipped so it can't sink
+ * the whole run; each success bumps the run's `screened` for live progress.
+ * Inline Map (not the Distributed Map named in §9.5) is the right tool for N ≤ 50 — see
+ * ARCHITECTURE.md §9 phase 5 for the deviation and the swap trigger.
+ */
 export class MatchingMachine extends Construct {
   readonly stateMachine: StateMachine;
 

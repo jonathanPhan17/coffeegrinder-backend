@@ -13,8 +13,10 @@ interface StartActorRunEvent {
   limit: number;
 }
 
-// The state carried through the poll loop. `attempts` starts at 0 and GetActorStatus bumps it;
-// the machine's guard trips to SetError once it reaches the ceiling, so a stuck run can't hang.
+/**
+ * The state carried through the poll loop. `attempts` starts at 0 and GetActorStatus bumps it;
+ * the machine's guard trips to SetError once it reaches the ceiling, so a stuck run can't hang.
+ */
 export interface ActorState {
   apifyRunId: string;
   datasetId: string;
@@ -22,10 +24,12 @@ export interface ActorState {
   status?: string;
 }
 
-// Step Functions Fetch stage, step 1: start the Apify actor run and return its handle. This
-// state is deliberately NOT retried by the machine (retryOnServiceExceptions: false) — a
-// retried start would pay for a second actor run. We persist the run id the instant we have it
-// so even a lost response is traceable to the run that was actually charged.
+/**
+ * Step Functions Fetch stage, step 1: start the Apify actor run and return its handle. This
+ * state is deliberately NOT retried by the machine (retryOnServiceExceptions: false) — a
+ * retried start would pay for a second actor run. We persist the run id the instant we have it
+ * so even a lost response is traceable to the run that was actually charged.
+ */
 export async function handler(event: StartActorRunEvent): Promise<ActorState> {
   const token = await getSecureParam(APIFY_TOKEN_PARAM);
   const input = buildIndeedInput({

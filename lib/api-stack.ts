@@ -21,9 +21,11 @@ export interface ApiStackProps extends StackProps {
 
 const WORKERS_DIR = path.join(__dirname, '..', 'src', 'workers');
 
-// Stateless layer: a single Fastify "lith" Lambda behind the HTTP API's default integration
-// (Fastify owns route dispatch) plus the async worker Lambdas that back the matching pipeline.
-// Consumes the data layer via explicit props and is granted least-privilege access to it.
+/**
+ * Stateless layer: a single Fastify "lith" Lambda behind the HTTP API's default integration
+ * (Fastify owns route dispatch) plus the async worker Lambdas that back the matching pipeline.
+ * Consumes the data layer via explicit props and is granted least-privilege access to it.
+ */
 export class ApiStack extends Stack {
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
@@ -197,7 +199,7 @@ interface NodeFunctionOptions {
   memorySize?: number;
 }
 
-// Shared defaults for every Node Lambda in this stack (Node 20, arm64, SDK bundled in).
+/** Shared defaults for every Node Lambda in this stack (Node 20, arm64, SDK bundled in). */
 function nodeFunction(scope: Construct, id: string, opts: NodeFunctionOptions): NodejsFunction {
   return new NodejsFunction(scope, id, {
     entry: opts.entry,

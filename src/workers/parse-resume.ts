@@ -11,12 +11,12 @@ interface ObjectCreatedDetail {
   object: { key: string; size: number };
 }
 
-// resumes/<userId>/<uuid>.pdf
+/** Key shape: resumes/<userId>/<uuid>.pdf */
 function userIdFromKey(key: string): string {
   return key.split('/')[1];
 }
 
-// S3 ObjectCreated (via EventBridge) → extract text → structure it → update the profile.
+/** S3 ObjectCreated (via EventBridge) → extract text → structure it → update the profile. */
 export async function handler(
   event: EventBridgeEvent<'Object Created', ObjectCreatedDetail>,
 ): Promise<void> {

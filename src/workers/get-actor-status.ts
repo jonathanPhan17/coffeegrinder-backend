@@ -9,9 +9,11 @@ interface GetActorStatusEvent {
   actor: ActorState;
 }
 
-// Step Functions Fetch stage, poll step: one status check, called on each loop pass after a
-// Wait. Returns the refreshed actor state (with attempts incremented) back to $.actor; the
-// machine's ActorDone Choice routes on `status` and enforces the attempts ceiling.
+/**
+ * Step Functions Fetch stage, poll step: one status check, called on each loop pass after a
+ * Wait. Returns the refreshed actor state (with attempts incremented) back to $.actor; the
+ * machine's ActorDone Choice routes on `status` and enforces the attempts ceiling.
+ */
 export async function handler(event: GetActorStatusEvent): Promise<ActorState> {
   const token = await getSecureParam(APIFY_TOKEN_PARAM);
   const { status, datasetId } = await getActorRunStatus(event.actor.apifyRunId, token);

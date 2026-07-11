@@ -2,9 +2,11 @@ import { z } from 'zod';
 import type { PostingCriteria } from './posting-criteria';
 import { callTool } from './tool-call';
 
-// One per-criterion verdict from the model, BEFORE the deterministic Verify step and the
-// code-computed score. `quote` must be a verbatim résumé snippet for met/partial (empty
-// for not_met); Verify string-matches it against the résumé. The model never scores.
+/**
+ * One per-criterion verdict from the model, BEFORE the deterministic Verify step and the
+ * code-computed score. `quote` must be a verbatim résumé snippet for met/partial (empty
+ * for not_met); Verify string-matches it against the résumé. The model never scores.
+ */
 export const ScoredCriterionSchema = z.object({
   criterion: z.string(),
   group: z.enum(['must_have', 'nice_to_have', 'dealbreaker']),

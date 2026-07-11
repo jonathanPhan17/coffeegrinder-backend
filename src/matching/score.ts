@@ -33,8 +33,10 @@ export function computeScore(
   return dealbreakerTriggered ? Math.min(base, DEALBREAKER_CAP) : base;
 }
 
-// Thresholds match the shipped frontend mock data (src/mocks/fixtures.ts), so tiers never
-// shift when MOCK flips off.
+/**
+ * Thresholds match the shipped frontend mock data (src/mocks/fixtures.ts), so tiers never
+ * shift when MOCK flips off.
+ */
 export function scoreToFitTier(score: number): FitTier {
   if (score >= 85) return 'strong';
   if (score >= 70) return 'good';
