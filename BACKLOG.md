@@ -156,6 +156,15 @@ the deployment half only:
   that hits `/health` (or runs a fetch->screen canary) during stack update and rolls back on
   failure.
 
+## Node 20 -> 22 bump (Lambda runtime + CI together)
+
+The first CI run (2026-07-11) surfaced an AWS SDK warning: SDK v3 versions published after
+the first week of January 2027 require Node >= 22. We pin Node 20 in two places on purpose
+so CI matches production — bump BOTH in the same commit: `NODEJS_20_X` -> `NODEJS_22_X` in
+`lib/api-stack.ts` (the `nodeFunction` helper) and `node-version: 20` -> `22` in
+`.github/workflows/ci.yml`. No urgency until late 2026; after the bump, run the full gate
+plus a dev deploy to confirm the Lambdas run clean on the new runtime.
+
 ## Tenure verification without explicit dates
 
 The Score model marks "5+ years X" as `not_met` when the résumé lists the skill but has
