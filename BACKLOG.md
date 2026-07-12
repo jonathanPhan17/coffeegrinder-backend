@@ -131,6 +131,29 @@ for the same search. Keep deferred until there is more than one user — tie it 
 Cognito + quotas external-user gate as the API-graduation item above. Not worth building for a
 single-user app.
 
+## cdk-nag security linting pass
+
+From the CDK best-practices review (2026-07-11): add cdk-nag's AwsSolutions pack as an
+app-level aspect and triage its findings one by one — fix, or suppress with a written reason.
+Valuable but its own slice: the first synth will emit a pile of findings that each need a
+decision. Ungated; pick up whenever a security-posture pass is wanted.
+
+## CI/CD pipeline + integration/deploy-time testing (conscious workflow change)
+
+From the same review, three related maturity items, all gated on the external-user/prod
+milestone (same gate as Cognito + quotas):
+
+- **CDK Pipelines (or a GitHub Actions equivalent).** NOTE: a pipeline auto-deploys, which
+  deliberately changes the current run-deploys-by-hand workflow — adopt only as a conscious
+  decision, not as a default. If GitHub Actions: authenticate via OIDC provider + roles
+  (bootstrapped once by a small separate CDK app), never long-lived access keys in repo
+  secrets.
+- **integ-runner integration tests** — deploys real stacks and flags destructive diffs
+  (e.g. a table key change that would wipe data) as part of review.
+- **Deploy-time smoke validation** — a triggers-module / intrinsic-validator custom resource
+  that hits `/health` (or runs a fetch->screen canary) during stack update and rolls back on
+  failure.
+
 ## Tenure verification without explicit dates
 
 The Score model marks "5+ years X" as `not_met` when the résumé lists the skill but has

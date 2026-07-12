@@ -10,6 +10,7 @@ import { Architecture, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import type { Bucket } from 'aws-cdk-lib/aws-s3';
 import type { Construct } from 'constructs';
+import { ENV_KEYS } from '../src/shared/env-keys';
 import type { EnvConfig } from './config';
 import { MatchingMachine } from './constructs/matching-machine';
 
@@ -74,8 +75,8 @@ export class ApiStack extends Stack {
     const lith = nodeFunction(this, 'FastifyLith', {
       entry: path.join(__dirname, '..', 'src', 'handler.ts'),
       environment: {
-        TABLE_NAME: props.table.tableName,
-        BUCKET_NAME: props.bucket.bucketName,
+        [ENV_KEYS.tableName]: props.table.tableName,
+        [ENV_KEYS.bucketName]: props.bucket.bucketName,
       },
     });
     props.table.grantReadWriteData(lith);
@@ -86,9 +87,9 @@ export class ApiStack extends Stack {
       entry: path.join(WORKERS_DIR, 'parse-resume.ts'),
       timeout: Duration.seconds(60),
       environment: {
-        TABLE_NAME: props.table.tableName,
-        BUCKET_NAME: props.bucket.bucketName,
-        BEDROCK_MODEL_ID: props.config.bedrockModelId,
+        [ENV_KEYS.tableName]: props.table.tableName,
+        [ENV_KEYS.bucketName]: props.bucket.bucketName,
+        [ENV_KEYS.bedrockModelId]: props.config.bedrockModelId,
       },
     });
     props.bucket.grantRead(parseResume);
@@ -100,8 +101,8 @@ export class ApiStack extends Stack {
       entry: path.join(WORKERS_DIR, 'extract-criteria.ts'),
       timeout: Duration.seconds(60),
       environment: {
-        TABLE_NAME: props.table.tableName,
-        BEDROCK_MODEL_ID: props.config.bedrockModelId,
+        [ENV_KEYS.tableName]: props.table.tableName,
+        [ENV_KEYS.bedrockModelId]: props.config.bedrockModelId,
       },
     });
     props.table.grantReadWriteData(extractCriteria);
@@ -112,8 +113,8 @@ export class ApiStack extends Stack {
       entry: path.join(WORKERS_DIR, 'score-posting.ts'),
       timeout: Duration.seconds(180),
       environment: {
-        TABLE_NAME: props.table.tableName,
-        BEDROCK_MODEL_ID: props.config.bedrockModelId,
+        [ENV_KEYS.tableName]: props.table.tableName,
+        [ENV_KEYS.bedrockModelId]: props.config.bedrockModelId,
       },
     });
     props.table.grantReadWriteData(scorePosting);
@@ -122,13 +123,13 @@ export class ApiStack extends Stack {
     // Apify Fetch workers (§9.7): the state machine's Fetch stage runs these in a
     // start → poll → collect loop. Only Start and Collect touch the table.
     const apifyEnv = {
-      APIFY_TOKEN_PARAM: props.config.apifyTokenParam,
-      APIFY_ACTOR_ID: props.config.apifyActorId,
+      [ENV_KEYS.apifyTokenParam]: props.config.apifyTokenParam,
+      [ENV_KEYS.apifyActorId]: props.config.apifyActorId,
     };
     const startActorRun = nodeFunction(this, 'StartActorRun', {
       entry: path.join(WORKERS_DIR, 'start-actor-run.ts'),
       timeout: Duration.seconds(30),
-      environment: { TABLE_NAME: props.table.tableName, ...apifyEnv },
+      environment: { [ENV_KEYS.tableName]: props.table.tableName, ...apifyEnv },
     });
     props.table.grantWriteData(startActorRun);
     grantApifyToken(startActorRun);
@@ -143,7 +144,7 @@ export class ApiStack extends Stack {
     const collectPostings = nodeFunction(this, 'CollectPostings', {
       entry: path.join(WORKERS_DIR, 'collect-postings.ts'),
       timeout: Duration.seconds(120),
-      environment: { TABLE_NAME: props.table.tableName, ...apifyEnv },
+      environment: { [ENV_KEYS.tableName]: props.table.tableName, ...apifyEnv },
     });
     props.table.grantWriteData(collectPostings);
     grantApifyToken(collectPostings);
@@ -157,7 +158,7 @@ export class ApiStack extends Stack {
       collectPostings,
     });
     matching.stateMachine.grantStartExecution(lith);
-    lith.addEnvironment('STATE_MACHINE_ARN', matching.stateMachine.stateMachineArn);
+    lith.addEnvironment(ENV_KEYS.stateMachineArn, matching.stateMachine.stateMachineArn);
 
     const api = new HttpApi(this, 'HttpApi', {
       defaultIntegration: new HttpLambdaIntegration('Lith', lith),
