@@ -18,6 +18,7 @@ Design: [ARCHITECTURE.md](./ARCHITECTURE.md).
 npm install
 npm run dev      # run the Fastify API locally on :3000 (GET /health)
 npm run build    # typecheck (tsc --noEmit)
+npm run lint     # ESLint with type-aware rules (eslint.config.mjs)
 npm test         # full test suite (vitest) — see Testing below
 npm run synth    # cdk synth
 npm run deploy   # cdk deploy --all
@@ -29,11 +30,13 @@ npm run deploy   # cdk deploy --all
 npm test                              # everything (~5s)
 npx vitest run lib/api-stack.test.ts  # one file
 npx vitest                            # watch mode — re-runs on save
-npm run build                         # typecheck; run it alongside the tests as the gate
+npm run build                         # typecheck
+npm run lint                          # lint — typecheck + lint + tests together are the gate
 ```
 
 The same gate also runs automatically on every push: GitHub Actions
-(`.github/workflows/ci.yml`) installs dependencies, typechecks, and runs the full suite.
+(`.github/workflows/ci.yml`) installs dependencies, typechecks, lints, and runs the full
+suite.
 A red mark on a commit on GitHub means one of those steps failed — the repo's **Actions**
 tab shows which step, with the same output you would see locally.
 
@@ -104,12 +107,13 @@ coffeegrinder-backend/
 ├── BACKLOG.md                    # deferred work, written so it can be picked up cold
 ├── CLAUDE.md                     # working conventions for changes in this repo
 ├── cdk.json                      # how the CDK runs the app + settings (model id, feature flags)
+├── eslint.config.mjs             # the lint rules: what counts as a problem beyond type errors
 └── vitest.config.ts
 ```
 
 A few layout choices, so they read as decisions and not accidents: tests live **next to
 the files they test** (no separate `test/` folder) so a module and its tests travel
 together; per-environment settings live in `cdk.json` + `lib/config.ts` (no `config/`
-folder of JSON files); and CI runs checks only (typecheck + tests, no AWS access) —
+folder of JSON files); and CI runs checks only (typecheck + lint + tests, no AWS access) —
 deploying is still a manual, deliberate act, and a deployment pipeline remains a
 recorded deferral in [BACKLOG.md](./BACKLOG.md).
