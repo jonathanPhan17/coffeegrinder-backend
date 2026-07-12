@@ -156,6 +156,17 @@ the deployment half only:
   that hits `/health` (or runs a fetch->screen canary) during stack update and rolls back on
   failure.
 
+## Dev-dependency audit findings (vitest 2.x chain)
+
+`npm audit` (surfaced 2026-07-11 during the lint slice) reports 5 findings, all in the
+dev-only vitest/esbuild chain — nothing in production dependencies: vitest@2.1.9
+(critical), vite (high, transitive), esbuild <=0.24.2 (moderate), plus @vitest/mocker and
+vite-node (moderate, transitive). Exposure is local dev/CI only (the esbuild advisory is a
+malicious-website-vs-dev-server issue), so no urgency. The fix is its own slice: bump
+vitest to 3.x and esbuild to a current 0.2x, then run the full gate — and because esbuild
+is also what CDK NodejsFunction uses to bundle the Lambdas, follow the bump with a dev
+deploy sanity check.
+
 ## Node 20 -> 22 bump (Lambda runtime + CI together)
 
 The first CI run (2026-07-11) surfaced an AWS SDK warning: SDK v3 versions published after

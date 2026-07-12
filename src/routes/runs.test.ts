@@ -14,10 +14,12 @@ const posting = {
   description: 'Build things.',
 };
 
+type RunBody = { count: number; screened: number };
+
 // The payload the route handed to the state machine (the SFN input is a JSON string).
 function startedPayload(): Record<string, unknown> {
   const [call] = sfnMock.commandCalls(StartExecutionCommand);
-  return JSON.parse(call.args[0].input.input as string);
+  return JSON.parse(call.args[0].input.input as string) as Record<string, unknown>;
 }
 
 describe('POST /runs', () => {
@@ -41,7 +43,7 @@ describe('POST /runs', () => {
     });
 
     expect(res.statusCode).toBe(201);
-    const body = res.json();
+    const body = res.json<RunBody>();
     expect(body.count).toBe(2); // …so run.count is overridden to what was actually stored.
     expect(body.screened).toBe(0);
     expect(startedPayload().postingIds).toHaveLength(2);
@@ -56,7 +58,7 @@ describe('POST /runs', () => {
       payload: { query: 'x', count: 1, postings: [posting, posting, posting] },
     });
 
-    expect(res.json().count).toBe(1);
+    expect(res.json<RunBody>().count).toBe(1);
     expect(startedPayload().postingIds).toHaveLength(1);
     await app.close();
   });
@@ -71,7 +73,7 @@ describe('POST /runs', () => {
 
     // run.count is the slider cap provisionally; the Fetch stage reconciles it to the
     // fetched count. The machine's HasPostingIds Choice keys off postingIds being absent.
-    expect(res.json().count).toBe(20);
+    expect(res.json<RunBody>().count).toBe(20);
     const payload = startedPayload();
     expect(payload.postingIds).toBeUndefined();
     expect(payload).toMatchObject({ query: 'backend', location: 'NYC', limit: 20 });

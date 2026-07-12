@@ -1,4 +1,4 @@
-# Test-only CI: typecheck + the full vitest suite on every push. Nothing here touches
+# Test-only CI: typecheck + lint + the full vitest suite on every push. Nothing here touches
 # AWS — no credentials, no secrets, no deploy. The deployment pipeline is a separate,
 # deliberately deferred decision (see BACKLOG.md).
 name: CI
@@ -28,5 +28,7 @@ jobs:
       - run: npm ci
       - name: Typecheck
         run: npm run build
+      - name: Lint
+        run: npm run lint
       - name: Test
         run: npm test
