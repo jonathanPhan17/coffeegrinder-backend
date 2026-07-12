@@ -1,4 +1,4 @@
-import { PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb } from '../shared/dynamodb';
 import { TABLE_NAME } from '../shared/env';
 import { keys } from '../shared/keys';
@@ -56,4 +56,30 @@ export async function getMatch(userId: string, matchId: string): Promise<Match |
     }),
   );
   return (Items ?? []).map(toMatch).find((m) => m.id === matchId) ?? null;
+}
+
+/**
+ * Moves a match through the pipeline board (PATCH /matches/{id}). Returns the updated
+ * match, or null when no match with that id exists for the user.
+ */
+export async function updateMatchStatus(
+  userId: string,
+  matchId: string,
+  status: Match['status'],
+): Promise<Match | null> {
+  const match = await getMatch(userId, matchId);
+  if (!match) return null;
+  await ddb.send(
+    new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: keys.match(match.runId, match.id),
+      // GSI1SK carries the status (the board groups by it), so it moves in lockstep.
+      UpdateExpression: 'SET #status = :status, GSI1SK = :gsi1sk',
+      // Update-only: never resurrect a match deleted between the lookup and this write.
+      ConditionExpression: 'attribute_exists(PK)',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: { ':status': status, ':gsi1sk': `STATUS#${status}` },
+    }),
+  );
+  return { ...match, status };
 }

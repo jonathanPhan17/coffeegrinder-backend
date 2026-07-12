@@ -9,8 +9,8 @@ The frontend is still MOCK-backed (`endpoints.ts` `MOCK = true`). The backend no
 full auto-fetch loop end-to-end: **`ApifySource` (§9.7) is live and field-proven**, so the
 `auto` source needs no more backend work. Shape of the cutover slice: point the app at the
 live API (`VITE_API_URL`) and flip the run/matches endpoints
-(`startRun`/`getRun`/`listMatches`/`getMatch`) to the live client **per-endpoint**, leaving
-`updateMatchStatus` (no PATCH route) and cover letters (no §9.8 backend) mocked; delete the
+(`startRun`/`getRun`/`listMatches`/`getMatch`/`updateMatchStatus`) to the live client
+**per-endpoint**, leaving only cover letters (no §9.8 backend) mocked; delete the
 client-side run-simulation block. The one behavioural gap to fix in the same slice:
 `RunStatusPage` handles query `isError` but not `run.status === 'error'`, so a live run that
 fails would freeze on the progress bars. Spec-first, cross-repo (frontend repo). The **paste
@@ -36,17 +36,6 @@ see how the matching scorecard actually consumes these fields before tuning.
   candidate's name ("Max is a full-stack developer…"). If the UI renders it as the
   candidate's own summary, switch the prompt to first-person or name-agnostic phrasing.
 
-## POST /runs — orphaned run if kickoff fails
-
-In `src/routes/runs.ts`, if `startRunExecution` throws after `putRun` succeeds, the run
-row is left in `queued` and the client gets a 500 — the frontend would poll it forever.
-Fix: wrap the kickoff and set the stored run to `status: 'error'` before rethrowing.
-
-## createRunSchema.posting.applyUrl not URL-validated
-
-In `src/routes/runs.ts`, `applyUrl` is `z.string()`, but the frontend deep-links it as
-the Apply target. Tighten to `z.string().url()` next time the schema is touched.
-
 ## Dealbreaker polarity relies on the prompt
 
 The `emit_criteria` schema instructs the model to phrase dealbreakers as requirements
@@ -56,22 +45,15 @@ inverting that row's polarity. Mitigation is prompt-level only today — a deter
 guard (or a post-check that flags suspected inversions) would harden it. A UX follow-up:
 surface low-confidence dealbreaker calls to the user rather than silently not-capping.
 
-## Surface run.failed in the UI
+## Rescreen failed postings affordance
 
-The matching state machine records a per-run `failed` counter (`ADD failed :one` on the run
-item) each time a posting's chain is caught and skipped, so a run can land `done` with zero
-matches yet stay explainable. Nothing reads it back yet: `toRun` in `src/data/run.ts` doesn't
-project `failed`, the frontend `domain.ts` Run type has no `failed` field, and the results
-screen can't distinguish "all N postings errored" from "genuinely no fits". Coordinated
-frontend change: add `failed?` to Run, project it in `toRun`, and surface it (e.g. a banner
-when `failed > 0`).
-
-**Priority note (2026-07-04):** no longer hypothetical — run `ef588719` dropped a posting
-(the candidate's best match, a React/TS/RN role) with no signal to the user beyond the raw
-counter. Also: because the failure is *tolerated* (the Map iteration ends successfully via
-RecordFailure), Step Functions redrive can't recover the dropped posting — as far as SFN is
-concerned the run completed cleanly. Recovery today means a whole new run; the real fix is a
-"rescreen the failed ones" affordance keyed off `failed`. Write that down before it's forgotten.
+Surfacing `run.failed` shipped (backend projects it in `toRun`, frontend banner + failure-aware
+progress, both merged 2026-07-10). What remains is recovery: because a posting's scoring
+failure is *tolerated* (the Map iteration ends successfully via RecordFailure), Step Functions
+redrive can't recover a dropped posting — as far as SFN is concerned the run completed cleanly.
+Recovery today means a whole new run. The real fix is a "rescreen the failed ones" affordance
+keyed off `failed` (motivating case: run `ef588719` dropped the candidate's best match, a
+React/TS/RN role).
 
 ## callTool robustness — remaining hardening
 
@@ -101,8 +83,8 @@ latency, not output correctness) — don't conflate the two.
 An Apify run whose query matches nothing lands `done` with `count: 0` (correct, and
 distinguishable from `error`). The backend is right; the risk is on the frontend results
 screen, which must render a "no jobs matched your search" empty state rather than a blank
-`0/0` progress bar or an empty results list. Pairs with the run.failed UI work and the
-mock->live cutover slice — pick it up when the results screen next gets touched.
+`0/0` progress bar or an empty results list. Pairs with the mock->live cutover slice —
+pick it up when the results screen next gets touched.
 
 ## Apify charge-then-save breadcrumb gap
 

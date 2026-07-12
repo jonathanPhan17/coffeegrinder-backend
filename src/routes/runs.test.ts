@@ -91,4 +91,33 @@ describe('POST /runs', () => {
     expect(res.statusCode).toBe(400);
     await app.close();
   });
+
+  it('rejects a posting whose applyUrl is not a url', async () => {
+    const app = buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/runs',
+      payload: { query: 'x', count: 5, postings: [{ ...posting, applyUrl: 'not-a-url' }] },
+    });
+
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('marks the stored run as error when the state machine kickoff fails', async () => {
+    sfnMock.on(StartExecutionCommand).rejects(new Error('sfn unavailable'));
+    const app = buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/runs',
+      payload: { query: 'backend', count: 20 },
+    });
+
+    expect(res.statusCode).toBe(500);
+    const statuses = ddbMock
+      .commandCalls(PutCommand)
+      .map((call) => (call.args[0].input.Item as Record<string, unknown>).status);
+    expect(statuses).toEqual(['queued', 'error']);
+    await app.close();
+  });
 });
