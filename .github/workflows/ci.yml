@@ -1,0 +1,32 @@
+# Test-only CI: typecheck + the full vitest suite on every push. Nothing here touches
+# AWS — no credentials, no secrets, no deploy. The deployment pipeline is a separate,
+# deliberately deferred decision (see BACKLOG.md).
+name: CI
+
+on:
+  push:
+  # Also run on pull requests: a push inside this repo already triggers above, but a PR
+  # from a fork would otherwise get no checks at all.
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Same Node major as the Lambda runtime (NODEJS_20_X in lib/api-stack.ts) —
+          # green here should mean green in production.
+          node-version: 20
+          cache: npm
+      # npm ci (not install): reproduce the lockfile exactly and fail loud if it
+      # disagrees with package.json, instead of silently rewriting it.
+      - run: npm ci
+      - name: Typecheck
+        run: npm run build
+      - name: Test
+        run: npm test

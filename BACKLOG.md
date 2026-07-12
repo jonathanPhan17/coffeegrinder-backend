@@ -138,21 +138,32 @@ app-level aspect and triage its findings one by one — fix, or suppress with a 
 Valuable but its own slice: the first synth will emit a pile of findings that each need a
 decision. Ungated; pick up whenever a security-posture pass is wanted.
 
-## CI/CD pipeline + integration/deploy-time testing (conscious workflow change)
+## Deployment pipeline + integration/deploy-time testing (conscious workflow change)
 
 From the same review, three related maturity items, all gated on the external-user/prod
-milestone (same gate as Cognito + quotas):
+milestone (same gate as Cognito + quotas). Test-only CI (typecheck + vitest on every push,
+zero AWS access) shipped 2026-07-11 as `.github/workflows/ci.yml` — what remains here is
+the deployment half only:
 
-- **CDK Pipelines (or a GitHub Actions equivalent).** NOTE: a pipeline auto-deploys, which
-  deliberately changes the current run-deploys-by-hand workflow — adopt only as a conscious
-  decision, not as a default. If GitHub Actions: authenticate via OIDC provider + roles
-  (bootstrapped once by a small separate CDK app), never long-lived access keys in repo
-  secrets.
+- **CDK Pipelines (or extending the GitHub Actions workflow to deploy).** NOTE: a pipeline
+  auto-deploys, which deliberately changes the current run-deploys-by-hand workflow — adopt
+  only as a conscious decision, not as a default. If extending GitHub Actions: authenticate
+  via OIDC provider + roles (bootstrapped once by a small separate CDK app), never
+  long-lived access keys in repo secrets.
 - **integ-runner integration tests** — deploys real stacks and flags destructive diffs
   (e.g. a table key change that would wipe data) as part of review.
 - **Deploy-time smoke validation** — a triggers-module / intrinsic-validator custom resource
   that hits `/health` (or runs a fetch->screen canary) during stack update and rolls back on
   failure.
+
+## Node 20 -> 22 bump (Lambda runtime + CI together)
+
+The first CI run (2026-07-11) surfaced an AWS SDK warning: SDK v3 versions published after
+the first week of January 2027 require Node >= 22. We pin Node 20 in two places on purpose
+so CI matches production — bump BOTH in the same commit: `NODEJS_20_X` -> `NODEJS_22_X` in
+`lib/api-stack.ts` (the `nodeFunction` helper) and `node-version: 20` -> `22` in
+`.github/workflows/ci.yml`. No urgency until late 2026; after the bump, run the full gate
+plus a dev deploy to confirm the Lambdas run clean on the new runtime.
 
 ## Tenure verification without explicit dates
 

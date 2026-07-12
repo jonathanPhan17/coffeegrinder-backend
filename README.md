@@ -32,6 +32,11 @@ npx vitest                            # watch mode — re-runs on save
 npm run build                         # typecheck; run it alongside the tests as the gate
 ```
 
+The same gate also runs automatically on every push: GitHub Actions
+(`.github/workflows/ci.yml`) installs dependencies, typechecks, and runs the full suite.
+A red mark on a commit on GitHub means one of those steps failed — the repo's **Actions**
+tab shows which step, with the same output you would see locally.
+
 Four kinds of tests. Each test file sits next to the file it tests (`foo.ts` → `foo.test.ts`):
 
 | Kind | Where | What it proves |
@@ -67,6 +72,9 @@ The resume worker calls Amazon Bedrock (Claude Sonnet), so before the first depl
 
 ```
 coffeegrinder-backend/
+├── .github/
+│   └── workflows/
+│       └── ci.yml                # GitHub Actions: typecheck + full test suite on every push
 ├── bin/
 │   └── app.ts                    # where the CDK app starts: creates the two stacks, tags everything
 ├── lib/                          # infrastructure code — defines what gets deployed to AWS
@@ -102,5 +110,6 @@ coffeegrinder-backend/
 A few layout choices, so they read as decisions and not accidents: tests live **next to
 the files they test** (no separate `test/` folder) so a module and its tests travel
 together; per-environment settings live in `cdk.json` + `lib/config.ts` (no `config/`
-folder of JSON files); and there is no CI pipeline yet — that is a recorded, deliberate
-deferral in [BACKLOG.md](./BACKLOG.md).
+folder of JSON files); and CI runs checks only (typecheck + tests, no AWS access) —
+deploying is still a manual, deliberate act, and a deployment pipeline remains a
+recorded deferral in [BACKLOG.md](./BACKLOG.md).
