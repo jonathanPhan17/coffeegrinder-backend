@@ -11,7 +11,8 @@ import type { Run } from '../types/domain';
 const pastedPostingSchema = z.object({
   title: z.string(),
   company: z.string(),
-  applyUrl: z.string(),
+  // Must parse as a URL — the frontend deep-links it as the Apply target.
+  applyUrl: z.string().url(),
   description: z.string(),
   location: z.string().optional(),
   remote: z.boolean().optional(),
@@ -68,13 +69,24 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
     };
     await putRun(DEFAULT_USER_ID, run);
 
-    await startRunExecution({
-      name: runId,
-      payload:
-        postingIds !== undefined
-          ? { userId: DEFAULT_USER_ID, runId, postingIds }
-          : { userId: DEFAULT_USER_ID, runId, query, limit: count, ...(location ? { location } : {}) },
-    });
+    try {
+      await startRunExecution({
+        name: runId,
+        payload:
+          postingIds !== undefined
+            ? { userId: DEFAULT_USER_ID, runId, postingIds }
+            : { userId: DEFAULT_USER_ID, runId, query, limit: count, ...(location ? { location } : {}) },
+      });
+    } catch (error) {
+      // The run row is already stored: without this it would sit queued forever and the
+      // frontend would poll a run no state machine is driving.
+      try {
+        await putRun(DEFAULT_USER_ID, { ...run, status: 'error' });
+      } catch (markError) {
+        request.log.error({ err: markError }, 'failed to mark orphaned run as error');
+      }
+      throw error;
+    }
 
     return reply.code(201).send(run);
   });
