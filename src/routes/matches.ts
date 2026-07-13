@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getMatch, listMatches, updateMatchStatus } from '../data/match';
+import { getMatch, listMatches, listUserMatches, updateMatchStatus } from '../data/match';
 import { DEFAULT_USER_ID } from '../shared/constants';
 
 /** Matches the shipped frontend contract (updateMatchStatus): { status: PipelineStatus }. */
@@ -9,11 +9,11 @@ const updateMatchSchema = z.object({
 });
 
 export async function matchesRoutes(app: FastifyInstance): Promise<void> {
-  // GET /matches?run=<id> — scored matches for a run, best first.
-  app.get<{ Querystring: { run?: string } }>('/matches', async (request, reply) => {
+  // GET /matches?run=<id> — scored matches for a run; without ?run, everything the
+  // user has across runs (the pipeline board). Both best first.
+  app.get<{ Querystring: { run?: string } }>('/matches', async (request) => {
     const runId = request.query.run;
-    if (!runId) return reply.code(400).send({ error: 'run query parameter is required' });
-    return listMatches(runId);
+    return runId ? listMatches(runId) : listUserMatches(DEFAULT_USER_ID);
   });
 
   // GET /matches/{id} — one match with its embedded evidence scorecard.
