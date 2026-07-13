@@ -3,19 +3,21 @@
 Deferred items surfaced during implementation. Remove an entry once it's resolved —
 this file should only ever reflect what's still outstanding.
 
-## Mock → live cutover (auto/Apify flow)
+## Resume upload mock → live (frontend, coordinated)
 
-The frontend is still MOCK-backed (`endpoints.ts` `MOCK = true`). The backend now serves the
-full auto-fetch loop end-to-end: **`ApifySource` (§9.7) is live and field-proven**, so the
-`auto` source needs no more backend work. Shape of the cutover slice: point the app at the
-live API (`VITE_API_URL`) and flip the run/matches endpoints
-(`startRun`/`getRun`/`listMatches`/`getMatch`/`updateMatchStatus`) to the live client
-**per-endpoint**, leaving only cover letters (no §9.8 backend) mocked; delete the
-client-side run-simulation block. The one behavioural gap to fix in the same slice:
-`RunStatusPage` handles query `isError` but not `run.status === 'error'`, so a live run that
-fails would freeze on the progress bars. Spec-first, cross-repo (frontend repo). The **paste
-tab** (build out the disabled "Paste · soon" control in `RunSetupForm.tsx` to send `postings[]`)
-is a separate, still-deferred source behind the same seam — not part of this cutover.
+The run/matches cutover shipped (2026-07-12: all five endpoints live, board backed by
+`GET /matches` without `run`, only cover letters still mocked — no §9.8 backend). The one
+remaining mock *flow* is resume upload: `useResumeUpload.ts` simulates the parse client-side
+(validates the file, fakes 1.2s of "parsing", then stores `mockProfile`). The backend half
+already exists (`POST /resume` returns a presigned S3 URL; upload triggers the parse
+pipeline). Cutover shape: request presign -> PUT the file to S3 -> poll the profile endpoint
+until the structured profile lands, replacing the simulation in `useResumeUpload.ts`.
+
+## Paste tab (frontend, deferred source)
+
+Build out the disabled "Paste · soon" control in `RunSetupForm.tsx` to send `postings[]` on
+`POST /runs` — the backend already accepts pasted postings (schema + `PastedSource` are live;
+curl-tested). Purely a frontend form slice behind the existing seam.
 
 ## parseFailed handling
 
