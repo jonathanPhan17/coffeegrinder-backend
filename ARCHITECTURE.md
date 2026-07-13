@@ -220,7 +220,7 @@ Implementations:
 | `POST /resume`          | Get presigned upload URL / register a resume       |
 | `POST /runs`            | Start a screening run (N, query) -> `runId`        |
 | `GET  /runs/{id}`       | Poll run status                                    |
-| `GET  /matches?run=…`   | List scored matches (sorted)                       |
+| `GET  /matches[?run=…]` | List scored matches (one run's, or without `run` all of the user's — the pipeline board) |
 | `GET  /matches/{id}`    | One match + its evidence scorecard                 |
 | `PATCH /matches/{id}`   | Update pipeline status                             |
 | `POST /coverletter`     | Generate/save a tailored cover letter for a match  |

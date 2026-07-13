@@ -46,7 +46,11 @@ export async function listMatches(runId: string): Promise<Match[]> {
   return (Items ?? []).map(toMatch).sort((a, b) => b.score - a.score);
 }
 
-export async function getMatch(userId: string, matchId: string): Promise<Match | null> {
+/**
+ * Every match the user has, across all runs, best score first — the pipeline
+ * board view (GET /matches without ?run).
+ */
+export async function listUserMatches(userId: string): Promise<Match[]> {
   const { Items } = await ddb.send(
     new QueryCommand({
       TableName: TABLE_NAME,
@@ -55,7 +59,11 @@ export async function getMatch(userId: string, matchId: string): Promise<Match |
       ExpressionAttributeValues: { ':pk': `USER#${userId}`, ':sk': 'STATUS#' },
     }),
   );
-  return (Items ?? []).map(toMatch).find((m) => m.id === matchId) ?? null;
+  return (Items ?? []).map(toMatch).sort((a, b) => b.score - a.score);
+}
+
+export async function getMatch(userId: string, matchId: string): Promise<Match | null> {
+  return (await listUserMatches(userId)).find((m) => m.id === matchId) ?? null;
 }
 
 /**

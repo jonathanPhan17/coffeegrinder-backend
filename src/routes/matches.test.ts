@@ -24,6 +24,38 @@ const match: Match = {
   status: 'matched',
 };
 
+describe('GET /matches', () => {
+  beforeEach(() => {
+    ddbMock.reset();
+  });
+
+  it('without ?run returns all the users matches via GSI1, best score first', async () => {
+    const better: Match = { ...match, id: 'p2', runId: 'r2', score: 95 };
+    ddbMock.on(QueryCommand).resolves({ Items: [match, better] });
+    const app = buildApp();
+    const res = await app.inject({ method: 'GET', url: '/matches' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json<Match[]>().map((m) => m.id)).toEqual(['p2', 'p1']);
+    const [call] = ddbMock.commandCalls(QueryCommand);
+    expect(call.args[0].input.IndexName).toBe('GSI1');
+    expect(call.args[0].input.ExpressionAttributeValues?.[':pk']).toBe('USER#me');
+    await app.close();
+  });
+
+  it('with ?run queries the runs item collection, not the index', async () => {
+    ddbMock.on(QueryCommand).resolves({ Items: [match] });
+    const app = buildApp();
+    const res = await app.inject({ method: 'GET', url: '/matches?run=r1' });
+
+    expect(res.statusCode).toBe(200);
+    const [call] = ddbMock.commandCalls(QueryCommand);
+    expect(call.args[0].input.IndexName).toBeUndefined();
+    expect(call.args[0].input.ExpressionAttributeValues?.[':pk']).toBe('RUN#r1');
+    await app.close();
+  });
+});
+
 describe('PATCH /matches/:id', () => {
   beforeEach(() => {
     ddbMock.reset();
