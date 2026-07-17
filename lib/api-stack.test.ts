@@ -15,6 +15,7 @@ const makeConfig = (bedrockModelId: string): EnvConfig => ({
   bedrockModelId,
   apifyTokenParam: '/coffeegrinder/apify-token',
   apifyActorId: 'misceres/indeed-scraper',
+  frontendDomain: 'coffeegrinder.app',
 });
 
 function synthApi(bedrockModelId: string): Template {

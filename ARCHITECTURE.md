@@ -32,7 +32,7 @@ instead of *many patients vs. one trial's criteria*, it is *one resume vs. many 
 |--------------------|-----------------------------------------------------------------------|
 | IaC                | **AWS CDK (TypeScript)**                                               |
 | Frontend           | React + TypeScript + Vite + Tailwind / shadcn (cozy "cinnamon" theme) |
-| Frontend hosting   | S3 + CloudFront (or Vercel)                                            |
+| Frontend hosting   | **S3 + CloudFront** on `coffeegrinder.app` — private bucket behind OAC, Route 53 zone (domain registered externally, DNS delegated in), us-east-1 ACM cert stack; app ships via s3 sync from the frontend repo, never `cdk deploy` |
 | API                | API Gateway (HTTP API) + Lambda (TypeScript, Fastify)                  |
 | Async triggers     | **EventBridge** (S3 object-created -> workers; keeps cross-stack deps one-directional) |
 | Async pipeline     | **AWS Step Functions** (Fetch -> inline Map -> Persist; §9.5)         |
@@ -58,7 +58,7 @@ end-to-end *sequence* is narrated in §4.
 
 | Component | Tech | Invoked by | Calls / reads / writes |
 |-----------|------|-----------|------------------------|
-| **Frontend** | React + TS + Vite + Tailwind/shadcn on S3 + CloudFront (or Vercel) | The user | The API, over HTTPS / JSON |
+| **Frontend** | React + TS + Vite + Tailwind/shadcn on S3 + CloudFront (`coffeegrinder.app`) | The user | The API, over HTTPS / JSON |
 | **API** | API Gateway (HTTP API) → Lambda (TS, Fastify) | Frontend | Presigns S3 uploads · starts Step Functions runs · reads/writes DynamoDB |
 | **Resume bucket** | S3 | API (presigned `PUT`) | Emits `ObjectCreated` → EventBridge |
 | **Parse worker** | Lambda (`pdf-parse`) | EventBridge S3 object-created, `resumes/` prefix | Reads the S3 object · writes extracted text to the profile (DynamoDB) |
@@ -270,4 +270,6 @@ Everything scales to zero except what you explicitly run:
 - Bedrock -> pay per token; one call per posting + prompt caching (resume prefix repeats
   across the fan-out) keeps a full N=20 run in the cents. Apify dominates real spend, not Bedrock.
 - Apify -> usage-based; the "pick N" cap throttles spend.
+- Domain -> ~$18/yr renewal at the registrar + $0.50/mo for the Route 53 zone; ACM cert
+  free; CloudFront/S3 pennies at this traffic.
 - No NAT gateway, no always-on RDS, no VPC endpoints.
