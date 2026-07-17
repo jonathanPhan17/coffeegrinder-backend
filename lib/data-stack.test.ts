@@ -11,6 +11,7 @@ const makeConfig = (overrides: Partial<EnvConfig> = {}): EnvConfig => ({
   bedrockModelId: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
   apifyTokenParam: '/coffeegrinder/apify-token',
   apifyActorId: 'misceres/indeed-scraper',
+  frontendDomain: 'coffeegrinder.app',
   ...overrides,
 });
 
