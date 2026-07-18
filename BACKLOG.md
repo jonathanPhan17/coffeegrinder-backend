@@ -19,6 +19,16 @@ Build out the disabled "Paste · soon" control in `RunSetupForm.tsx` to send `po
 `POST /runs` — the backend already accepts pasted postings (schema + `PastedSource` are live;
 curl-tested). Purely a frontend form slice behind the existing seam.
 
+## Unauthenticated public API — accepted posture
+
+The live site (coffeegrinder.app) necessarily publishes the API URL in its JS bundle, and
+the API has no auth: anyone with the URL can start runs (Apify + Bedrock spend on our
+account, bounded per run by the count cap) and read match data (which embeds resume
+evidence snippets). Accepted deliberately while the app is a personal tool with an
+unpromoted URL; mitigated by a monthly AWS Budgets alarm (account-level, created via CLI,
+outside CDK). The real fix is the Cognito slice already gated on the external-user
+milestone — pull it forward before promoting the site anywhere public.
+
 ## parseFailed handling
 
 `ParseResume` worker throws on parse failure but there's no `parseFailed` state
