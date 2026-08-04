@@ -1,7 +1,14 @@
 # Coffee Grinder — Backend
 
-AWS CDK (TypeScript) infrastructure for the Coffee Grinder job-screening pipeline.
-Design: [ARCHITECTURE.md](./ARCHITECTURE.md).
+The serverless backend for Coffee Grinder, an AI job-matching tool: upload a resume,
+point it at a batch of job postings, and get an explainable scorecard for each one —
+every score backed by evidence quotes pulled from the actual resume and posting.
+
+Everything here is **Node.js + TypeScript on AWS**: a Fastify HTTP API running on
+Lambda, background worker Lambdas, a Step Functions workflow driving each screening run
+end to end, DynamoDB and S3 for storage, and Amazon Bedrock (Claude) for the AI steps —
+all defined as code with the AWS CDK. Design: [ARCHITECTURE.md](./ARCHITECTURE.md). The
+web app lives in [coffee-grinder](https://github.com/jonathanPhan17/coffee-grinder).
 
 ## Stacks
 
