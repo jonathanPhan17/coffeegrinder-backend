@@ -76,7 +76,11 @@ VPC endpoints (see §2).*
 
 ## 4. End-to-end flow
 
-1. **Upload** — User uploads a resume PDF via a presigned URL to **S3**. An **EventBridge
+1. **Upload** — User uploads a resume PDF via a presigned URL to **S3**. The route rejects
+   non-PDF types (415) and anything over **10 MB** (413), and the presigned URL signs
+   `content-type` and `content-length`, so S3 itself refuses a body whose type or size
+   differs from what was validated — the cap holds even against a client that skips the
+   API contract. An **EventBridge
    rule** (S3 object-created, `resumes/` prefix) triggers a parse Lambda that extracts text
    with `pdf-parse` and stores it on the profile in DynamoDB. The
    profile write is conditional on the event's S3 key matching the profile's current key,
@@ -217,7 +221,7 @@ Implementations:
 
 | Method & route          | Purpose                                            |
 |-------------------------|----------------------------------------------------|
-| `POST /resume`          | Get presigned upload URL / register a resume       |
+| `POST /resume`          | Get presigned upload URL (PDF, ≤ 10 MB) / register a resume |
 | `POST /runs`            | Start a screening run (N, query) -> `runId`        |
 | `GET  /runs/{id}`       | Poll run status                                    |
 | `GET  /matches[?run=…]` | List scored matches (one run's, or without `run` all of the user's — the pipeline board) |
@@ -232,6 +236,11 @@ Implementations:
 **MVP — the demo that sells it (all free, no Apify spend):**
 1. CDK foundation: API Gateway + health Lambda + DynamoDB + S3 (no VPC).
 2. Resume upload + parse.
+   *As built: the presigned PUT signs `content-type` and `content-length` (10 MB cap; the
+   route also 413s a larger declared size before touching the stored profile), and the
+   shared S3 client sets `requestChecksumCalculation: WHEN_REQUIRED` — the SDK's
+   post-3.729 default bakes an empty-body CRC32 checksum into presigned URLs, and S3
+   would reject every real browser PUT made with them.*
 3. `PastedSource` -> single match via Step Functions.
 4. Scorecard UI: score + per-criterion "why".
 5. Scale to N via Distributed Map + configurable count.

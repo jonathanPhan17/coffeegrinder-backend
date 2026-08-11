@@ -3,16 +3,6 @@
 Deferred items surfaced during implementation. Remove an entry once it's resolved —
 this file should only ever reflect what's still outstanding.
 
-## Resume upload mock → live (frontend, coordinated)
-
-The run/matches cutover shipped (2026-07-12: all five endpoints live, board backed by
-`GET /matches` without `run`, only cover letters still mocked — no §9.8 backend). The one
-remaining mock *flow* is resume upload: `useResumeUpload.ts` simulates the parse client-side
-(validates the file, fakes 1.2s of "parsing", then stores `mockProfile`). The backend half
-already exists (`POST /resume` returns a presigned S3 URL; upload triggers the parse
-pipeline). Cutover shape: request presign -> PUT the file to S3 -> poll the profile endpoint
-until the structured profile lands, replacing the simulation in `useResumeUpload.ts`.
-
 ## Paste tab (frontend, deferred source)
 
 Build out the disabled "Paste · soon" control in `RunSetupForm.tsx` to send `postings[]` on
@@ -33,7 +23,9 @@ milestone — pull it forward before promoting the site anywhere public.
 
 `ParseResume` worker throws on parse failure but there's no `parseFailed` state
 surfaced to the frontend. Needs a coordinated `domain.ts` change (frontend has no
-field for it yet) before this can be picked up.
+field for it yet) before this can be picked up. The live upload flow mitigates with
+a client-side poll timeout (honest error + retry after ~90s), so a failed parse no
+longer hangs the UI — but the user still can't tell "parse failed" from "parse slow".
 
 ## Resume-structure prompt polish
 
