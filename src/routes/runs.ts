@@ -27,10 +27,11 @@ const createRunSchema = z.object({
   query: z.string(),
   location: z.string().optional(),
   remote: z.boolean().optional(),
-  // Bounds the fan-out (and Bedrock spend). Frontend slider is 5–50; min 1 lets the
-  // curl/paste flow screen a single posting.
-  count: z.number().int().min(1).max(50),
-  postings: z.array(pastedPostingSchema).min(1).max(50).optional(),
+  // Bounds the fan-out — and therefore the Bedrock + Apify spend one request can trigger.
+  // Frontend slider is 1–5; min 1 lets the curl/paste flow screen a single posting. The
+  // pasted array gets the same cap: every stored posting becomes a paid scoring call.
+  count: z.number().int().min(1).max(5),
+  postings: z.array(pastedPostingSchema).min(1).max(5).optional(),
 });
 
 export async function runsRoutes(app: FastifyInstance): Promise<void> {
