@@ -4,7 +4,7 @@ import {
   type ConverseCommandOutput,
 } from '@aws-sdk/client-bedrock-runtime';
 import { mockClient } from 'aws-sdk-client-mock';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { scoreMatch } from './score-match';
 
 const bedrockMock = mockClient(BedrockRuntimeClient);
@@ -40,6 +40,7 @@ const criteria = { must_haves: ['React proficiency'], nice_to_haves: [], dealbre
 
 describe('scoreMatch', () => {
   beforeEach(() => bedrockMock.reset());
+  afterEach(() => vi.unstubAllEnvs());
 
   it('returns the validated scorecard', async () => {
     bedrockMock.on(ConverseCommand).resolves(scorecardReply(validScorecard));
@@ -66,5 +67,19 @@ describe('scoreMatch', () => {
     bedrockMock.on(ConverseCommand).resolves(scorecardReply({ bogus: true }));
 
     await expect(scoreMatch('resume', criteria)).rejects.toThrow(/schema validation/);
+  });
+
+  it('stays on the standard model even when a fast model is configured', async () => {
+    // Scoring is the quality-sensitive call — moving it to the cheap tier is a deliberate,
+    // benchmark-backed decision (scripts/scoring-benchmark.ts), never a config side effect.
+    vi.resetModules();
+    vi.stubEnv('BEDROCK_MODEL_ID', 'standard-model');
+    vi.stubEnv('BEDROCK_FAST_MODEL_ID', 'fast-model');
+    bedrockMock.on(ConverseCommand).resolves(scorecardReply(validScorecard));
+
+    const fresh = (await import('./score-match')).scoreMatch;
+    await fresh('resume', criteria);
+
+    expect(bedrockMock.commandCalls(ConverseCommand)[0].args[0].input.modelId).toBe('standard-model');
   });
 });

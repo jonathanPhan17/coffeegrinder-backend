@@ -5,8 +5,19 @@ export interface EnvConfig {
   isProd: boolean;
   /** Origins allowed to call the API / upload to S3 (CORS). */
   allowedOrigins: string[];
-  /** Bedrock model / inference-profile id for LLM calls; set via `-c bedrockModelId=…` or BEDROCK_MODEL_ID. */
+  /**
+   * Bedrock model / inference-profile id for LLM calls; override with `-c bedrockModelId=…`
+   * (the BEDROCK_MODEL_ID env var is read only when no context entry exists, and cdk.json
+   * sets one — so under `cdk deploy` the env var is dead).
+   */
   bedrockModelId: string;
+  /**
+   * Cheaper model for the extraction-class calls (posting criteria, resume structuring);
+   * override with `-c bedrockFastModelId=…` (same context-beats-env caveat as above).
+   * Empty (`-c bedrockFastModelId=`) is valid and means no split — the runtime falls back
+   * to bedrockModelId. Scoring never uses this id.
+   */
+  bedrockFastModelId: string;
   /** SSM SecureString name holding the Apify API token (decrypted at runtime by the fetch workers). */
   apifyTokenParam: string;
   /** Apify store actor the Fetch stage runs (§9.7). */
@@ -34,6 +45,10 @@ export function loadConfig(app: App): EnvConfig {
     (app.node.tryGetContext('bedrockModelId') as string | undefined) ??
     process.env.BEDROCK_MODEL_ID ??
     '';
+  const bedrockFastModelId =
+    (app.node.tryGetContext('bedrockFastModelId') as string | undefined) ??
+    process.env.BEDROCK_FAST_MODEL_ID ??
+    '';
   const frontendDomain =
     (app.node.tryGetContext('frontendDomain') as string | undefined) ?? DEFAULT_FRONTEND_DOMAIN;
   // The deployed site calls the API cross-origin, exactly like localhost does.
@@ -43,6 +58,7 @@ export function loadConfig(app: App): EnvConfig {
     isProd,
     allowedOrigins: isProd ? [] : [...DEV_ORIGINS, ...siteOrigins],
     bedrockModelId,
+    bedrockFastModelId,
     apifyTokenParam:
       (app.node.tryGetContext('apifyTokenParam') as string | undefined) ??
       DEFAULT_APIFY_TOKEN_PARAM,

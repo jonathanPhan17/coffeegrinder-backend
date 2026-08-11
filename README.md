@@ -54,7 +54,8 @@ Four kinds of tests. Each test file sits next to the file it tests (`foo.ts` →
 | Plain unit tests | `src/matching/`, `src/sources/` | Logic with no AWS in it at all: the scoring math, quote verification, input validation |
 | Unit tests with AWS faked | `src/ai/`, `src/data/`, `src/routes/` | Our code around Bedrock / DynamoDB / Step Functions, with the AWS responses faked (`aws-sdk-client-mock`) |
 | Infrastructure tests | `lib/*.test.ts` | The CloudFormation the CDK generates: prod keeps its data when a stack is deleted, each Lambda gets only the permissions it needs, the workflow is wired correctly |
-| Live sign-off | `scripts/calltool-signoff.ts` | The real model recovers when its first answer fails validation. **Not** part of `npm test` — it makes a paid Bedrock call. Run `npm run signoff:calltool` (with `BEDROCK_MODEL_ID` set) whenever the model is swapped |
+| Live sign-off | `scripts/calltool-signoff.ts` | The real model recovers when its first answer fails validation. **Not** part of `npm test` — it makes a paid Bedrock call. Run `npm run signoff:calltool` (with `BEDROCK_MODEL_ID` set) whenever either model id is swapped — once per new id |
+| Scoring benchmark | `scripts/scoring-benchmark.ts` | Whether a candidate scoring model holds up on real stored postings: fabricated-quote rate (the production verifier), retries, tokens, est. cost. **Not** part of `npm test` — one paid scoring call per posting. Run per model with `npm run benchmark:scoring -- --out scoring-benchmark-<model>.json` (names matching that pattern stay gitignored), then `--compare` the two files |
 
 ## Deploy
 
@@ -68,15 +69,30 @@ switches CORS to its allow-list and uses RETAIN removal policies.
 
 ### Bedrock prerequisite
 
-The resume worker calls Amazon Bedrock (Claude Sonnet), so before the first deploy:
+The AI workers call Amazon Bedrock on two model tiers — **Claude Sonnet** for match
+scoring and **Claude Haiku** for the cheap extraction calls (posting criteria, resume
+structuring) — so before the first deploy (and before any deploy that changes an id):
 
-1. **Enable model access** for the Sonnet model in the Bedrock console, in your deploy
-   region. The configured model is a US cross-region inference profile, so deploy to one
-   of `us-east-1`, `us-east-2`, `us-west-1`, `us-west-2`.
-2. The model id is set in `cdk.json` → `context.bedrockModelId`
-   (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`). Override per-deploy with
-   `-c bedrockModelId=<id>` or the `BEDROCK_MODEL_ID` env var. `ApiStack` fails fast if
-   it is unset.
+1. **Model access is automatic** — AWS retired the Bedrock console "model access"
+   page; serverless models enable on first invocation (Anthropic models may ask a
+   first-time account for use-case details once). Both configured models are US
+   cross-region inference profiles, so deploy to one of `us-east-1`, `us-east-2`,
+   `us-west-1`, `us-west-2`. A runtime `AccessDeniedException` in an AI worker points
+   at IAM/SCP restrictions or that one-time use-case form, not a missing console
+   toggle.
+2. The ids are set in `cdk.json`: `context.bedrockModelId`
+   (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`, scoring) and
+   `context.bedrockFastModelId` (`us.anthropic.claude-haiku-4-5-20251001-v1:0`,
+   extraction). Override per-deploy with `-c bedrockModelId=<id>` /
+   `-c bedrockFastModelId=<id>` — the `-c` form only; the same-named env vars are
+   read solely when a context entry is absent, and `cdk.json` sets both, so an env var
+   is silently ignored under `cdk deploy`. `ApiStack` fails fast if the standard id is
+   unset; an empty fast id (`-c bedrockFastModelId=`) is valid and means every call
+   uses the standard model, exactly as before the split.
+3. On any id change, run `npm run signoff:calltool` with `BEDROCK_MODEL_ID` set to the
+   NEW id (the sign-off exercises whatever id is in that env var, whichever tier it will
+   serve) — and for a **scoring** model change, run the scoring benchmark first (see
+   Testing).
 
 ## Folder structure
 
@@ -109,7 +125,8 @@ coffeegrinder-backend/
 │   ├── shared/                   # small helpers used everywhere: AWS clients, env vars, key builders
 │   └── types/                    # the TypeScript types shared with the frontend API
 ├── scripts/
-│   └── calltool-signoff.ts       # manual check against the real Bedrock model (costs money)
+│   ├── calltool-signoff.ts       # manual check against the real Bedrock model (costs money)
+│   └── scoring-benchmark.ts      # compares scoring models on real stored postings (costs money)
 ├── ARCHITECTURE.md               # the design doc — section references like "§7" point here
 ├── BACKLOG.md                    # deferred work, written so it can be picked up cold
 ├── CLAUDE.md                     # working conventions for changes in this repo

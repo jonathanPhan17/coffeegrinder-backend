@@ -4,6 +4,7 @@ import { ENV_KEYS } from './env-keys';
 export const TABLE_NAME = process.env[ENV_KEYS.tableName] ?? '';
 export const BUCKET_NAME = process.env[ENV_KEYS.bucketName] ?? '';
 export const BEDROCK_MODEL_ID = process.env[ENV_KEYS.bedrockModelId] ?? '';
+export const BEDROCK_FAST_MODEL_ID = process.env[ENV_KEYS.bedrockFastModelId] ?? '';
 export const STATE_MACHINE_ARN = process.env[ENV_KEYS.stateMachineArn] ?? '';
 
 /**

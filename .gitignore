@@ -7,3 +7,6 @@ cdk.out/
 .env.*
 *.log
 .DS_Store
+
+# Scoring-benchmark result files (local evidence, not source)
+scoring-benchmark-*.json

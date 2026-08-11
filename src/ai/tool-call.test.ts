@@ -4,8 +4,9 @@ import {
   type ConverseCommandOutput,
 } from '@aws-sdk/client-bedrock-runtime';
 import { mockClient } from 'aws-sdk-client-mock';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { logger } from '../shared/logger';
 import { type ToolCallSpec, callTool } from './tool-call';
 
 const bedrockMock = mockClient(BedrockRuntimeClient);
@@ -156,5 +157,66 @@ describe('callTool', () => {
     expect(retryContent[1]).toEqual({ cachePoint: { type: 'default' } });
     expect(retryContent[2]?.text).toContain(spec.userText);
     expect(retryContent[2]?.text).toContain(`Call ${spec.toolName} with input matching the schema`);
+  });
+
+  it('logs token usage with the model id on success even without a cachePrefix', async () => {
+    // The success-path log is the raw feed for per-user spend metering — a call site that
+    // stays silent (as uncached calls did before the tier split) is a metering hole.
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    bedrockMock.on(ConverseCommand).resolves(toolReply({ ok: true }));
+
+    await callTool(schema, spec);
+
+    expect(info).toHaveBeenCalledWith(
+      'thing tokens',
+      expect.objectContaining({
+        label: 'thing',
+        modelId: expect.any(String) as string,
+        usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+      }),
+    );
+    info.mockRestore();
+  });
+});
+
+// Tier → model-id resolution reads env at module load (the shared env.ts contract), so each
+// test stubs env first and imports a fresh copy of the module. The Bedrock mock survives the
+// re-import: aws-sdk-client-mock stubs the client class itself, which vitest does not reset.
+describe('model tier routing', () => {
+  beforeEach(() => {
+    bedrockMock.reset();
+    vi.resetModules();
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  const freshCallTool = async (): Promise<typeof callTool> => (await import('./tool-call')).callTool;
+
+  it('bills a fast-tier call to BEDROCK_FAST_MODEL_ID when it is set', async () => {
+    vi.stubEnv('BEDROCK_MODEL_ID', 'standard-model');
+    vi.stubEnv('BEDROCK_FAST_MODEL_ID', 'fast-model');
+    bedrockMock.on(ConverseCommand).resolves(toolReply({ ok: true }));
+
+    await (await freshCallTool())(schema, { ...spec, tier: 'fast' });
+
+    expect(bedrockMock.commandCalls(ConverseCommand)[0].args[0].input.modelId).toBe('fast-model');
+  });
+
+  it('falls back to the standard model when no fast model is configured', async () => {
+    vi.stubEnv('BEDROCK_MODEL_ID', 'standard-model');
+    bedrockMock.on(ConverseCommand).resolves(toolReply({ ok: true }));
+
+    await (await freshCallTool())(schema, { ...spec, tier: 'fast' });
+
+    expect(bedrockMock.commandCalls(ConverseCommand)[0].args[0].input.modelId).toBe('standard-model');
+  });
+
+  it('keeps default-tier calls on the standard model even when a fast id exists', async () => {
+    vi.stubEnv('BEDROCK_MODEL_ID', 'standard-model');
+    vi.stubEnv('BEDROCK_FAST_MODEL_ID', 'fast-model');
+    bedrockMock.on(ConverseCommand).resolves(toolReply({ ok: true }));
+
+    await (await freshCallTool())(schema, spec);
+
+    expect(bedrockMock.commandCalls(ConverseCommand)[0].args[0].input.modelId).toBe('standard-model');
   });
 });

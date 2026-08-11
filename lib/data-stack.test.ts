@@ -9,6 +9,7 @@ const makeConfig = (overrides: Partial<EnvConfig> = {}): EnvConfig => ({
   isProd: false,
   allowedOrigins: ['http://localhost:5173'],
   bedrockModelId: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+  bedrockFastModelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
   apifyTokenParam: '/coffeegrinder/apify-token',
   apifyActorId: 'misceres/indeed-scraper',
   frontendDomain: 'coffeegrinder.app',

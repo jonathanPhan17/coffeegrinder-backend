@@ -4,7 +4,7 @@ import {
   type ConverseCommandOutput,
 } from '@aws-sdk/client-bedrock-runtime';
 import { mockClient } from 'aws-sdk-client-mock';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StructuredProfileSchema, structureResume } from './resume-structure';
 
 const bedrockMock = mockClient(BedrockRuntimeClient);
@@ -54,6 +54,7 @@ describe('StructuredProfileSchema', () => {
 
 describe('structureResume', () => {
   beforeEach(() => bedrockMock.reset());
+  afterEach(() => vi.unstubAllEnvs());
 
   it('returns the validated profile from a forced tool-use response', async () => {
     bedrockMock.on(ConverseCommand).resolves(toolReply(validProfile));
@@ -93,5 +94,18 @@ describe('structureResume', () => {
 
     await expect(structureResume('raw resume text')).rejects.toThrow(/schema validation/);
     expect(bedrockMock.commandCalls(ConverseCommand)).toHaveLength(3);
+  });
+
+  it('bills to the fast model when one is configured (extraction-class call)', async () => {
+    // Env is read at module load, so stub first and import a fresh copy (s3.test.ts idiom).
+    vi.resetModules();
+    vi.stubEnv('BEDROCK_MODEL_ID', 'standard-model');
+    vi.stubEnv('BEDROCK_FAST_MODEL_ID', 'fast-model');
+    bedrockMock.on(ConverseCommand).resolves(toolReply(validProfile));
+
+    const fresh = (await import('./resume-structure')).structureResume;
+    await fresh('raw resume text');
+
+    expect(bedrockMock.commandCalls(ConverseCommand)[0].args[0].input.modelId).toBe('fast-model');
   });
 });
