@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { getProfile, putPendingProfile } from '../data/resume-profile';
 import {
   DEFAULT_USER_ID,
+  MAX_RESUME_SIZE_BYTES,
   RESUME_CONTENT_TYPE,
   UPLOAD_URL_TTL_SECONDS,
 } from '../shared/constants';
@@ -24,9 +25,19 @@ export async function resumeRoutes(app: FastifyInstance): Promise<void> {
     if (contentType !== RESUME_CONTENT_TYPE) {
       return reply.code(415).send({ error: 'Only application/pdf is supported' });
     }
+    // sizeBytes becomes the signed content-length; a fraction or non-positive value
+    // would sign a header no real request carries, minting a URL nothing can use.
+    if (!Number.isInteger(sizeBytes) || sizeBytes <= 0) {
+      return reply.code(400).send({ error: 'sizeBytes must be a positive integer' });
+    }
+    if (sizeBytes > MAX_RESUME_SIZE_BYTES) {
+      return reply
+        .code(413)
+        .send({ error: `Resume must be ${MAX_RESUME_SIZE_BYTES / 1024 / 1024} MB or smaller` });
+    }
 
     const key = `resumes/${DEFAULT_USER_ID}/${randomUUID()}.pdf`;
-    const uploadUrl = await presignUpload(key, contentType, UPLOAD_URL_TTL_SECONDS);
+    const uploadUrl = await presignUpload(key, contentType, sizeBytes, UPLOAD_URL_TTL_SECONDS);
     await putPendingProfile(DEFAULT_USER_ID, {
       fileName,
       sizeKb: Math.max(1, Math.round(sizeBytes / 1024)),
