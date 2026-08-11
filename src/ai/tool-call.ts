@@ -7,7 +7,7 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 import type { ZodIssue, ZodType } from 'zod';
 import { bedrock } from '../shared/bedrock';
-import { BEDROCK_MODEL_ID } from '../shared/env';
+import { BEDROCK_FAST_MODEL_ID, BEDROCK_MODEL_ID } from '../shared/env';
 import { logger } from '../shared/logger';
 
 export interface ToolCallSpec {
@@ -27,6 +27,13 @@ export interface ToolCallSpec {
    */
   cachePrefix?: string;
   maxTokens?: number;
+  /**
+   * Which model bills the call. 'standard' (the default) is the full-strength model
+   * (BEDROCK_MODEL_ID); 'fast' is the cheaper extraction-class model (BEDROCK_FAST_MODEL_ID),
+   * falling back to standard when no fast model is configured — so an environment without
+   * the fast id behaves exactly as before the split.
+   */
+  tier?: 'standard' | 'fast';
 }
 
 // Original call + 2 self-correcting retries. At temperature 0 a verbatim retry mostly
@@ -56,20 +63,23 @@ interface AttemptResult {
  * repair in-context. Throws after the last attempt so callers surface failure.
  */
 export async function callTool<T>(schema: ZodType<T>, spec: ToolCallSpec): Promise<T> {
+  const modelId = modelIdForTier(spec.tier);
   // First turn carries the cached prefix + checkpoint (when set); the retry path spreads it
   // unchanged, so corrections read the same warm cache.
   let messages: Message[] = [userTurn(spec, spec.userText)];
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const res = await invokeTool(spec, messages);
+    const res = await invokeTool(spec, modelId, messages);
 
     // A truncated (max_tokens) response is always a failed attempt — never accept a partial
     // tool call, even if the fragment happens to satisfy the schema.
     const parsed = res.stopReason === 'max_tokens' ? undefined : schema.safeParse(res.input);
     if (parsed?.success) {
-      // Cache observability: usage carries cacheReadInputTokens / cacheWriteInputTokens.
-      // Gated on cachePrefix so the success path stays silent for uncached calls.
-      if (spec.cachePrefix) logger.info(`${spec.label} tokens`, { label: spec.label, usage: res.usage });
+      // Per-call cost telemetry: usage carries input/output plus cacheRead/cacheWrite token
+      // counts, and modelId is what prices them. Logged on every success — but a spend meter
+      // must sum this entry PLUS the failure warns below: retried attempts bill too, and
+      // their usage appears only there (scripts/scoring-benchmark.ts sums both).
+      logger.info(`${spec.label} tokens`, { label: spec.label, modelId, usage: res.usage });
       return parsed.data;
     }
 
@@ -80,6 +90,7 @@ export async function callTool<T>(schema: ZodType<T>, spec: ToolCallSpec): Promi
     logger.warn(`${spec.label} failed schema validation`, {
       event: exhausted ? 'llm_validation_exhausted' : 'llm_validation_retry',
       label: spec.label,
+      modelId,
       attempt,
       stopReason: res.stopReason,
       usage: res.usage,
@@ -94,10 +105,24 @@ export async function callTool<T>(schema: ZodType<T>, spec: ToolCallSpec): Promi
   throw new Error(`${spec.label} failed schema validation after retry`);
 }
 
-async function invokeTool(spec: ToolCallSpec, messages: Message[]): Promise<AttemptResult> {
+// The fast tier falls back to the standard id when unset. Guard asymmetry with the IAM
+// grants in lib/api-stack.ts: fast-tier workers carry both ids but a fast-only grant, so a
+// wrong-tier call there is a loud AccessDenied — while ScorePosting carries no fast id at
+// all, so flipping score-match to tier:'fast' silently falls back to the standard model. A
+// scoring-model swap is a bedrockModelId config change (or an api-stack env + grant change
+// in the same diff), never just a tier edit at the call site.
+function modelIdForTier(tier: ToolCallSpec['tier']): string {
+  return tier === 'fast' && BEDROCK_FAST_MODEL_ID ? BEDROCK_FAST_MODEL_ID : BEDROCK_MODEL_ID;
+}
+
+async function invokeTool(
+  spec: ToolCallSpec,
+  modelId: string,
+  messages: Message[],
+): Promise<AttemptResult> {
   const response = await bedrock.send(
     new ConverseCommand({
-      modelId: BEDROCK_MODEL_ID,
+      modelId,
       system: [{ text: spec.systemPrompt }],
       messages,
       inferenceConfig: { temperature: 0, maxTokens: spec.maxTokens ?? 2048 },

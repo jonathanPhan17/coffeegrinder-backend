@@ -11,6 +11,7 @@
     "test": "vitest run",
     "dev": "ts-node src/local.ts",
     "signoff:calltool": "ts-node scripts/calltool-signoff.ts",
+    "benchmark:scoring": "ts-node scripts/scoring-benchmark.ts",
     "synth": "cdk synth",
     "diff": "cdk diff",
     "deploy": "cdk deploy --all"

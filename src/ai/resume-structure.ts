@@ -52,5 +52,8 @@ export function structureResume(resumeText: string): Promise<StructuredProfile> 
     systemPrompt: SYSTEM_PROMPT,
     userText: resumeText,
     label: 'resume structuring',
+    // Extraction-class task, same reasoning as posting-criteria: summarize one document into
+    // fields the schema already constrains — the cheap tier handles it.
+    tier: 'fast',
   });
 }

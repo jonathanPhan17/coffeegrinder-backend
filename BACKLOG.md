@@ -67,8 +67,9 @@ the decision-grade failure log (`event`, `label`, `attempt`, `stopReason`, `usag
 call twice returned `criteria` as a string / `summary` missing, dropping the posting).
 Production sign-off passed 2026-07-04 against `us.anthropic.claude-sonnet-4-5-20250929-v1:0`
 via `scripts/calltool-signoff.ts` (attempt 1 failed Zod → Bedrock accepted the toolResult
-correction → model recovered). Re-run that harness (`npm run signoff:calltool` with
-`BEDROCK_MODEL_ID` set) on any model swap. Still outstanding:
+correction → model recovered), and 2026-08-10 against
+`us.anthropic.claude-haiku-4-5-20251001-v1:0` ahead of the fast-tier rollout. Re-run that
+harness (`npm run signoff:calltool` with `BEDROCK_MODEL_ID` set) on any model swap. Still outstanding:
 
 - **Evidence-gated coercion:** now that `rawInput` is logged, if a real failure shows a field
   arriving as stringified JSON, add a targeted `JSON.parse`-before-validate (a two-line
@@ -81,6 +82,21 @@ correction → model recovered). Re-run that harness (`npm run signoff:calltool`
 Rate signal: filter `llm_validation_exhausted` by `label` for the true per-call-site drop rate,
 `llm_validation_retry` for the recoverable-flake rate. Orthogonal to prompt caching (cost /
 latency, not output correctness) — don't conflate the two.
+
+## Scoring-model decision — benchmark before any swap
+
+Scoring stays on Sonnet 4.5 until `scripts/scoring-benchmark.ts` says otherwise: run it
+against the current model and a candidate on the same stored postings, `--compare` the
+JSONs, and judge by fabricated-quote rate + validation exhaustions before cost. Candidates
+worth the run: **Haiku 4.5** ($1/$5 vs $3/$15 per M tokens — up to ~3x total-bill savings
+IF quality holds, which is unproven until benchmarked) and **Sonnet 5** (better model at
+the same list price — its $2/$10 intro pricing ends 2026-08-31, so treat post-promo
+$3/$15 as the real number). Any swap also needs a signoff run (README prerequisite
+steps; model access itself is automatic on first invocation now).
+Swap mechanics: scoring bills the STANDARD tier, so the swap
+is `-c bedrockModelId=<new id>` / cdk.json — do NOT flip `tier: 'fast'` in score-match.ts;
+the deployed ScorePosting Lambda carries no fast id, so that flip silently falls back to
+the standard model unless the api-stack env + grant move in the same diff.
 
 ## Apify "no jobs found" empty state (frontend, coordinated)
 

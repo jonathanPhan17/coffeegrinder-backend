@@ -8,17 +8,21 @@ import type { EnvConfig } from './config';
 
 const ENV = { account: '111111111111', region: 'us-west-1' };
 
-const makeConfig = (bedrockModelId: string): EnvConfig => ({
+const SONNET_ID = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
+const HAIKU_ID = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+
+const makeConfig = (bedrockModelId: string, bedrockFastModelId: string): EnvConfig => ({
   envName: 'dev',
   isProd: false,
   allowedOrigins: ['http://localhost:5173'],
   bedrockModelId,
+  bedrockFastModelId,
   apifyTokenParam: '/coffeegrinder/apify-token',
   apifyActorId: 'misceres/indeed-scraper',
   frontendDomain: 'coffeegrinder.app',
 });
 
-function synthApi(bedrockModelId: string): Template {
+function synthApi(bedrockModelId: string, bedrockFastModelId = ''): Template {
   // Skip esbuild bundling — the assertions only need the resource graph, and bundling
   // every NodejsFunction would dominate the suite's runtime.
   const app = new App({ context: { 'aws:cdk:bundling-stacks': [] } });
@@ -30,7 +34,7 @@ function synthApi(bedrockModelId: string): Template {
   const bucket = new Bucket(support, 'Bucket');
   const stack = new ApiStack(app, 'Api', {
     env: ENV,
-    config: makeConfig(bedrockModelId),
+    config: makeConfig(bedrockModelId, bedrockFastModelId),
     table,
     bucket,
   });
@@ -62,16 +66,25 @@ function rolesWithEnv(
     .map((fn) => (fn.Properties.Role as { 'Fn::GetAtt': [string, string] })['Fn::GetAtt'][0]);
 }
 
-function actionsOfRole(template: Template, roleLogicalId: string): string[] {
+function statementsOfRole(template: Template, roleLogicalId: string): StatementShape[] {
   return Object.values(template.findResources('AWS::IAM::Policy'))
     .filter((policy) =>
       (policy.Properties.Roles as { Ref: string }[]).some((r) => r.Ref === roleLogicalId),
     )
-    .flatMap((policy) => policy.Properties.PolicyDocument.Statement as StatementShape[])
-    .flatMap((statement) => [statement.Action].flat());
+    .flatMap((policy) => policy.Properties.PolicyDocument.Statement as StatementShape[]);
 }
 
-const template = synthApi('us.anthropic.claude-sonnet-4-5-20250929-v1:0');
+function actionsOfRole(template: Template, roleLogicalId: string): string[] {
+  return statementsOfRole(template, roleLogicalId).flatMap((statement) => [statement.Action].flat());
+}
+
+function bedrockInvokesOfRole(template: Template, roleLogicalId: string): StatementShape[] {
+  return statementsOfRole(template, roleLogicalId).filter((s) =>
+    [s.Action].flat().includes('bedrock:InvokeModel'),
+  );
+}
+
+const template = synthApi(SONNET_ID, HAIKU_ID);
 
 describe('ApiStack IAM posture', () => {
   it('scopes every kms:Decrypt to SSM via the ViaService condition, never a bare wildcard', () => {
@@ -109,15 +122,55 @@ describe('ApiStack IAM posture', () => {
     }
   });
 
-  it('scopes bedrock:InvokeModel to the inference profile plus its foundation model', () => {
-    const invokes = allStatements(template).filter((s) =>
-      [s.Action].flat().includes('bedrock:InvokeModel'),
+  it('grants the score worker the standard model only — never the fast one', () => {
+    // Scoring must stay on the full-strength model. Note the guard's limit: ScorePosting
+    // carries no fast id, so a tier flip in score-match.ts alone falls back to the standard
+    // model at runtime and never trips this grant — a scoring swap must come through config
+    // (see the grant comment in api-stack.ts). This test pins the grant so that swap is a
+    // visible template change.
+    const roles = rolesWithEnv(
+      template,
+      (env) => 'BEDROCK_MODEL_ID' in env && !('BEDROCK_FAST_MODEL_ID' in env),
     );
+    expect(roles).toHaveLength(1); // ScorePosting
+    const invokes = bedrockInvokesOfRole(template, roles[0]);
     expect(invokes.length).toBeGreaterThan(0);
     for (const statement of invokes) {
       // CDK emits a single resource as a scalar, not a one-element array — flatten first.
       expect([statement.Resource].flat()).toEqual([
-        'arn:aws:bedrock:us-west-1:111111111111:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        `arn:aws:bedrock:us-west-1:111111111111:inference-profile/${SONNET_ID}`,
+        'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0',
+      ]);
+    }
+  });
+
+  it('grants the extraction workers the fast model only — never the standard one', () => {
+    const roles = rolesWithEnv(template, (env) => 'BEDROCK_FAST_MODEL_ID' in env);
+    expect(roles).toHaveLength(2); // ParseResume, ExtractCriteria
+    for (const role of roles) {
+      const invokes = bedrockInvokesOfRole(template, role);
+      expect(invokes.length).toBeGreaterThan(0);
+      for (const statement of invokes) {
+        expect([statement.Resource].flat()).toEqual([
+          `arn:aws:bedrock:us-west-1:111111111111:inference-profile/${HAIKU_ID}`,
+          'arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0',
+        ]);
+      }
+    }
+  });
+
+  it('grants every AI worker the standard model when no fast model is configured', () => {
+    const noSplit = synthApi(SONNET_ID);
+    // No worker carries the fast env var, and every Bedrock grant is the standard model —
+    // an env without the split behaves exactly as before it existed.
+    expect(rolesWithEnv(noSplit, (env) => 'BEDROCK_FAST_MODEL_ID' in env)).toHaveLength(0);
+    const invokes = allStatements(noSplit).filter((s) =>
+      [s.Action].flat().includes('bedrock:InvokeModel'),
+    );
+    expect(invokes.length).toBeGreaterThan(0);
+    for (const statement of invokes) {
+      expect([statement.Resource].flat()).toEqual([
+        `arn:aws:bedrock:us-west-1:111111111111:inference-profile/${SONNET_ID}`,
         'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0',
       ]);
     }

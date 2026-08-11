@@ -7,6 +7,7 @@ export const ENV_KEYS = {
   tableName: 'TABLE_NAME',
   bucketName: 'BUCKET_NAME',
   bedrockModelId: 'BEDROCK_MODEL_ID',
+  bedrockFastModelId: 'BEDROCK_FAST_MODEL_ID',
   stateMachineArn: 'STATE_MACHINE_ARN',
   apifyTokenParam: 'APIFY_TOKEN_PARAM',
   apifyActorId: 'APIFY_ACTOR_ID',

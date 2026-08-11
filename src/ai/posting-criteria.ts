@@ -49,5 +49,9 @@ export function extractCriteria(jdText: string): Promise<PostingCriteria> {
     systemPrompt: SYSTEM_PROMPT,
     userText: jdText,
     label: 'posting criteria',
+    // Extraction-class task: pull stated requirements out of one document, no cross-document
+    // judgment. Quality-sensitive scoring stays on the standard tier; a scoring-model change
+    // goes through scripts/scoring-benchmark.ts first.
+    tier: 'fast',
   });
 }

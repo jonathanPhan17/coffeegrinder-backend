@@ -36,7 +36,7 @@ instead of *many patients vs. one trial's criteria*, it is *one resume vs. many 
 | API                | API Gateway (HTTP API) + Lambda (TypeScript, Fastify)                  |
 | Async triggers     | **EventBridge** (S3 object-created -> workers; keeps cross-stack deps one-directional) |
 | Async pipeline     | **AWS Step Functions** (Fetch -> inline Map -> Persist; §9.5)         |
-| AI                 | **Amazon Bedrock** — Claude Sonnet, one grounded scorecard call per posting (Converse API + tool-use JSON, prompt caching) |
+| AI                 | **Amazon Bedrock** — two Claude tiers: Sonnet for the grounded scorecard call, Haiku for the extraction-class calls (criteria, resume structuring). Converse API + tool-use JSON, prompt caching |
 | Data               | **DynamoDB** (single-table) + **S3** (resume files)                   |
 | Lambda tooling     | Powertools for AWS Lambda (TS) — structured logs/tracing/metrics; Zod at LLM boundaries |
 | Testing            | Vitest + aws-sdk-client-mock; CDK assertions for infra invariants (retention, IAM posture, machine graph) |
@@ -63,7 +63,7 @@ end-to-end *sequence* is narrated in §4.
 | **Resume bucket** | S3 | API (presigned `PUT`) | Emits `ObjectCreated` → EventBridge |
 | **Parse worker** | Lambda (`pdf-parse`) | EventBridge S3 object-created, `resumes/` prefix | Reads the S3 object · writes extracted text to the profile (DynamoDB) |
 | **Matching pipeline** | Step Functions — Fetch → inline Map → Persist (§9.5) | `POST /runs`, via the API | Fetches from Apify · per posting: Score (Bedrock) + Verify (in code) · writes scored matches to DynamoDB |
-| **AI** | Amazon Bedrock — Claude Sonnet, tool-use JSON | Distributed Map (Score) · cover-letter Lambda | Returns strict-JSON scorecards / letter text |
+| **AI** | Amazon Bedrock — Claude Sonnet (scoring) + Claude Haiku (extraction), tool-use JSON | Inline Map (Score) · cover-letter Lambda | Returns strict-JSON scorecards / letter text |
 | **Job ingestion** | Apify REST API (behind `JobSource`) | Step Functions Fetch state | Returns normalized postings (§6) |
 | **Data** | DynamoDB (single table) | API · workers · Step Functions | Profiles · runs · postings · matches · evidence · letters (§7) |
 | **Cover letters** | Lambda | `POST /coverletter` | Bedrock (resume + posting) → DynamoDB |
@@ -126,6 +126,16 @@ Before matching, each **job posting is parsed into structured criteria** (a sepa
 LLM call): `{ must_haves[], nice_to_haves[], dealbreakers[] }`. The resume is parsed into
 a structured profile once per upload. The resume + system-prompt prefix repeats across
 all N calls in a run — **prompt caching** makes the fan-out's repeated tokens ~90% cheaper.
+
+**Two model tiers.** The extraction-class calls (posting criteria, resume structuring)
+pull stated facts out of one document into a Zod-checked shape — a cheaper model does that
+job, so they run on a **fast tier** (Haiku; `BEDROCK_FAST_MODEL_ID`, falling back to the
+standard id when unset). The Score call is where judgment quality shows up in the product,
+so it stays on the standard model (Sonnet); moving it is a decision made with
+`scripts/scoring-benchmark.ts` evidence (fabricated-quote rate vs the shipped model on
+real stored postings), never a config default. Every call logs token usage + model id —
+success `tokens` entries plus per-attempt failure warns; a per-user spend meter (when
+accounts land) must sum both, because retried attempts bill too.
 
 Output per match: an **overall score (%)**, a **verdict**, and a list of **per-criterion
 evidence** rows (criterion, met/partial/not_met, verified evidence quote, reasoning) —
@@ -277,7 +287,9 @@ Implementations:
 Everything scales to zero except what you explicitly run:
 - Lambda, API Gateway, S3, EventBridge, Step Functions, DynamoDB (on-demand) -> ~$0 at rest.
 - Bedrock -> pay per token; one call per posting + prompt caching (resume prefix repeats
-  across the fan-out) keeps a full N=20 run in the cents. Apify dominates real spend, not Bedrock.
+  across the fan-out) keeps a full N=20 run in the cents, and the extraction-class calls
+  (criteria, resume structuring) run on the cheaper fast tier (§5). Apify dominates real
+  spend, not Bedrock.
 - Apify -> usage-based; the "pick N" cap throttles spend.
 - Domain -> ~$18/yr renewal at the registrar + $0.50/mo for the Route 53 zone; ACM cert
   free; CloudFront/S3 pennies at this traffic.

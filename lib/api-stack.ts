@@ -37,14 +37,31 @@ export class ApiStack extends Stack {
       );
     }
 
-    const grantBedrock = (fn: NodejsFunction): void => {
+    // Each AI worker is granted only the model its calls actually bill to, mirroring the
+    // runtime fallback in src/ai/tool-call.ts (fast tier → BEDROCK_FAST_MODEL_ID, else the
+    // standard id). For the fast-tier workers a wrong-tier call is a loud AccessDenied in
+    // dev. ScorePosting is the deliberate asymmetry: it carries no fast id, so a tier flip
+    // in score-match.ts alone would silently fall back to the standard model — a scoring
+    // swap changes bedrockModelId (or this stack's env + grant in the same diff), never
+    // only the tier at the call site.
+    const fastModelId = props.config.bedrockFastModelId || props.config.bedrockModelId;
+    const grantBedrock = (fn: NodejsFunction, modelId: string): void => {
       fn.addToRolePolicy(
         new PolicyStatement({
           effect: Effect.ALLOW,
           actions: ['bedrock:InvokeModel'],
-          resources: bedrockInvokeResources(props.config.bedrockModelId, this.region, this.account),
+          resources: bedrockInvokeResources(modelId, this.region, this.account),
         }),
       );
+    };
+
+    // Fast-tier workers still carry the standard id so the runtime fallback stays coherent;
+    // the fast id is injected only when configured (empty means "no split").
+    const fastTierEnv: Record<string, string> = {
+      [ENV_KEYS.bedrockModelId]: props.config.bedrockModelId,
+      ...(props.config.bedrockFastModelId
+        ? { [ENV_KEYS.bedrockFastModelId]: props.config.bedrockFastModelId }
+        : {}),
     };
 
     // Read the Apify token SecureString and decrypt it. The decrypt grant is scoped to the
@@ -83,32 +100,34 @@ export class ApiStack extends Stack {
     props.bucket.grantReadWrite(lith);
 
     // Resume parse worker: S3 ObjectCreated → extract text → structure → profile.
+    // Its one LLM call (resume structuring) runs on the fast tier.
     const parseResume = nodeFunction(this, 'ParseResume', {
       entry: path.join(WORKERS_DIR, 'parse-resume.ts'),
       timeout: Duration.seconds(60),
       environment: {
         [ENV_KEYS.tableName]: props.table.tableName,
         [ENV_KEYS.bucketName]: props.bucket.bucketName,
-        [ENV_KEYS.bedrockModelId]: props.config.bedrockModelId,
+        ...fastTierEnv,
       },
     });
     props.bucket.grantRead(parseResume);
     props.table.grantWriteData(parseResume);
-    grantBedrock(parseResume);
+    grantBedrock(parseResume, fastModelId);
 
-    // Matching worker 1: posting JD → structured criteria on the posting item.
+    // Matching worker 1: posting JD → structured criteria on the posting item (fast tier).
     const extractCriteria = nodeFunction(this, 'ExtractCriteria', {
       entry: path.join(WORKERS_DIR, 'extract-criteria.ts'),
       timeout: Duration.seconds(60),
       environment: {
         [ENV_KEYS.tableName]: props.table.tableName,
-        [ENV_KEYS.bedrockModelId]: props.config.bedrockModelId,
+        ...fastTierEnv,
       },
     });
     props.table.grantReadWriteData(extractCriteria);
-    grantBedrock(extractCriteria);
+    grantBedrock(extractCriteria, fastModelId);
 
     // Matching worker 2: grounded Score → code Verify → computed score → persist Match.
+    // Scoring is the quality-sensitive call and stays on the standard model.
     const scorePosting = nodeFunction(this, 'ScorePosting', {
       entry: path.join(WORKERS_DIR, 'score-posting.ts'),
       timeout: Duration.seconds(180),
@@ -118,7 +137,7 @@ export class ApiStack extends Stack {
       },
     });
     props.table.grantReadWriteData(scorePosting);
-    grantBedrock(scorePosting);
+    grantBedrock(scorePosting, props.config.bedrockModelId);
 
     // Apify Fetch workers (§9.7): the state machine's Fetch stage runs these in a
     // start → poll → collect loop. Only Start and Collect touch the table.
