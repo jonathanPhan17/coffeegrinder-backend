@@ -38,8 +38,8 @@ describe('POST /runs', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/runs',
-      // Slider count (50) exceeds the two pasted postings…
-      payload: { query: 'backend', count: 50, postings: [posting, posting] },
+      // Slider count (5) exceeds the two pasted postings…
+      payload: { query: 'backend', count: 5, postings: [posting, posting] },
     });
 
     expect(res.statusCode).toBe(201);
@@ -68,15 +68,41 @@ describe('POST /runs', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/runs',
-      payload: { query: 'backend', location: 'NYC', count: 20 },
+      payload: { query: 'backend', location: 'NYC', count: 5 },
     });
 
     // run.count is the slider cap provisionally; the Fetch stage reconciles it to the
     // fetched count. The machine's HasPostingIds Choice keys off postingIds being absent.
-    expect(res.json<RunBody>().count).toBe(20);
+    expect(res.json<RunBody>().count).toBe(5);
     const payload = startedPayload();
     expect(payload.postingIds).toBeUndefined();
-    expect(payload).toMatchObject({ query: 'backend', location: 'NYC', limit: 20 });
+    expect(payload).toMatchObject({ query: 'backend', location: 'NYC', limit: 5 });
+    await app.close();
+  });
+
+  it('rejects a count over the spend cap', async () => {
+    const app = buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/runs',
+      payload: { query: 'backend', count: 6 },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(sfnMock.commandCalls(StartExecutionCommand)).toHaveLength(0);
+    await app.close();
+  });
+
+  it('rejects a pasted-postings array over the spend cap', async () => {
+    const app = buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/runs',
+      payload: { query: 'x', count: 5, postings: Array.from({ length: 6 }, () => posting) },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(sfnMock.commandCalls(StartExecutionCommand)).toHaveLength(0);
     await app.close();
   });
 
@@ -110,7 +136,7 @@ describe('POST /runs', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/runs',
-      payload: { query: 'backend', count: 20 },
+      payload: { query: 'backend', count: 5 },
     });
 
     expect(res.statusCode).toBe(500);
