@@ -69,9 +69,11 @@ switches CORS to its allow-list and uses RETAIN removal policies.
 
 ### Bedrock prerequisite
 
-The AI workers call Amazon Bedrock on two model tiers — **Claude Sonnet** for match
-scoring and **Claude Haiku** for the cheap extraction calls (posting criteria, resume
-structuring) — so before the first deploy (and before any deploy that changes an id):
+The AI workers call Amazon Bedrock on two model tiers — a **standard** tier for match
+scoring and a **fast** tier for the cheap extraction calls (posting criteria, resume
+structuring); both currently **Claude Haiku 4.5**, scoring having moved off Sonnet 4.5
+on 2026-08-11 scoring-benchmark evidence — so before the first deploy (and before any
+deploy that changes an id):
 
 1. **Model access is automatic** — AWS retired the Bedrock console "model access"
    page; serverless models enable on first invocation (Anthropic models may ask a
@@ -81,7 +83,7 @@ structuring) — so before the first deploy (and before any deploy that changes 
    at IAM/SCP restrictions or that one-time use-case form, not a missing console
    toggle.
 2. The ids are set in `cdk.json`: `context.bedrockModelId`
-   (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`, scoring) and
+   (`us.anthropic.claude-haiku-4-5-20251001-v1:0`, scoring) and
    `context.bedrockFastModelId` (`us.anthropic.claude-haiku-4-5-20251001-v1:0`,
    extraction). Override per-deploy with `-c bedrockModelId=<id>` /
    `-c bedrockFastModelId=<id>` — the `-c` form only; the same-named env vars are

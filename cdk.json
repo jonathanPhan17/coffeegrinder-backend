@@ -10,7 +10,7 @@
     "@aws-cdk/aws-iam:minimizePolicies": true,
     "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
     "@aws-cdk/core:defaultCrossStackReferences": "strong",
-    "bedrockModelId": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "bedrockModelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     "bedrockFastModelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0"
   }
 }
