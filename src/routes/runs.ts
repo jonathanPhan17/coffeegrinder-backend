@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getRun, putPosting, putRun } from '../data/run';
-import { DEFAULT_USER_ID } from '../shared/constants';
 import { startRunExecution } from '../shared/sfn';
 import { PastedSource } from '../sources/pasted';
 import { resolveSource } from '../sources/resolve';
@@ -68,21 +67,21 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
       screened: 0,
       createdAt: new Date().toISOString(),
     };
-    await putRun(DEFAULT_USER_ID, run);
+    await putRun(request.userId, run);
 
     try {
       await startRunExecution({
         name: runId,
         payload:
           postingIds !== undefined
-            ? { userId: DEFAULT_USER_ID, runId, postingIds }
-            : { userId: DEFAULT_USER_ID, runId, query, limit: count, ...(location ? { location } : {}) },
+            ? { userId: request.userId, runId, postingIds }
+            : { userId: request.userId, runId, query, limit: count, ...(location ? { location } : {}) },
       });
     } catch (error) {
       // The run row is already stored: without this it would sit queued forever and the
       // frontend would poll a run no state machine is driving.
       try {
-        await putRun(DEFAULT_USER_ID, { ...run, status: 'error' });
+        await putRun(request.userId, { ...run, status: 'error' });
       } catch (markError) {
         request.log.error({ err: markError }, 'failed to mark orphaned run as error');
       }
@@ -94,7 +93,7 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /runs/{id} — poll run status; the frontend polls this until status is done.
   app.get<{ Params: { id: string } }>('/runs/:id', async (request, reply) => {
-    const run = await getRun(DEFAULT_USER_ID, request.params.id);
+    const run = await getRun(request.userId, request.params.id);
     if (!run) return reply.code(404).send({ error: 'run not found' });
     return run;
   });

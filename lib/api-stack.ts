@@ -1,7 +1,14 @@
 import * as path from 'node:path';
 import { CfnOutput, Duration, Stack, type StackProps } from 'aws-cdk-lib';
-import { CorsHttpMethod, HttpApi } from 'aws-cdk-lib/aws-apigatewayv2';
+import {
+  CorsHttpMethod,
+  HttpApi,
+  HttpMethod,
+  HttpNoneAuthorizer,
+} from 'aws-cdk-lib/aws-apigatewayv2';
+import { HttpUserPoolAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import type { IUserPool, IUserPoolClient } from 'aws-cdk-lib/aws-cognito';
 import type { TableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { Rule } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
@@ -18,6 +25,8 @@ export interface ApiStackProps extends StackProps {
   config: EnvConfig;
   table: TableV2;
   bucket: Bucket;
+  userPool: IUserPool;
+  userPoolClient: IUserPoolClient;
 }
 
 const WORKERS_DIR = path.join(__dirname, '..', 'src', 'workers');
@@ -181,6 +190,12 @@ export class ApiStack extends Stack {
 
     const api = new HttpApi(this, 'HttpApi', {
       defaultIntegration: new HttpLambdaIntegration('Lith', lith),
+      // Every route (the $default catch-all included) demands a pool-minted JWT, so
+      // unauthenticated junk dies at the gateway without invoking the lith (spend
+      // protection).
+      defaultAuthorizer: new HttpUserPoolAuthorizer('JwtAuth', props.userPool, {
+        userPoolClients: [props.userPoolClient],
+      }),
       corsPreflight: props.config.allowedOrigins.length
         ? {
             allowOrigins: props.config.allowedOrigins,
@@ -194,6 +209,27 @@ export class ApiStack extends Stack {
             maxAge: Duration.days(1),
           }
         : undefined,
+    });
+
+    // Health stays open for probes — one of two carve-outs from the default JWT authorizer.
+    api.addRoutes({
+      path: '/health',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('LithHealth', lith),
+      authorizer: new HttpNoneAuthorizer(),
+    });
+
+    // CORS preflights are the other carve-out. Browsers never attach Authorization to a
+    // preflight OPTIONS, and in this API preflights route through the $default catch-all
+    // (see the src/app.ts comment) — with the JWT authorizer there they would 401 at the
+    // gateway and block every cross-origin call from the site. This unauthenticated
+    // OPTIONS route outranks $default; the lith's options catch-all answers 204 and the
+    // gateway appends the configured Access-Control-* headers.
+    api.addRoutes({
+      path: '/{proxy+}',
+      methods: [HttpMethod.OPTIONS],
+      integration: new HttpLambdaIntegration('LithPreflight', lith),
+      authorizer: new HttpNoneAuthorizer(),
     });
 
     new CfnOutput(this, 'ApiUrl', { value: api.apiEndpoint });
