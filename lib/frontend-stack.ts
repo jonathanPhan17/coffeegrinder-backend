@@ -50,8 +50,9 @@ export class FrontendStack extends Stack {
       domainNames: [frontendDomain, `www.${frontendDomain}`],
       certificate: props.certificate,
       minimumProtocolVersion: SecurityPolicyProtocol.TLS_V1_2_2021,
-      // NA + EU edges only — the cheapest class; widen if real users appear elsewhere.
-      priceClass: PriceClass.PRICE_CLASS_100,
+      // NA + EU + Asia edges (Tokyo included) — widened from PRICE_CLASS_100 when the
+      // first real user in Japan appeared; ALL adds only South America/Oceania edges.
+      priceClass: PriceClass.PRICE_CLASS_200,
       httpVersion: HttpVersion.HTTP2_AND_3,
       // SPA fallback: React Router owns paths like /runs/<id>, which exist as no S3
       // object — deep links and refreshes must serve the shell instead of an error
