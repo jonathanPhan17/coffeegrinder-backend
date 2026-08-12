@@ -14,16 +14,23 @@ web app lives in [coffee-grinder](https://github.com/jonathanPhan17/coffee-grind
 
 - **`Coffeegrinder-Data-<env>`** — DynamoDB single table + S3 resume bucket (stateful;
   RETAIN + PITR in prod).
+- **`Coffeegrinder-Auth-<env>`** — Cognito user pool (open email+password signup),
+  hosted-UI domain, and the no-secret SPA client (stateful; RETAIN + deletion protection
+  in prod). Its outputs — `UserPoolId`, `UserPoolClientId`, `AuthDomain` — are the
+  values the frontend's `VITE_` auth vars get filled from.
 - **`Coffeegrinder-Api-<env>`** — everything stateless: the HTTP API + a Fastify "lith"
   Lambda serving all routes, the background worker Lambdas (parse the resume, extract
   criteria, score postings, and the three Apify fetch steps), and the Step Functions
   workflow that drives a run end-to-end (fetch → screen → persist; ARCHITECTURE §4).
+  The HTTP API validates a Cognito JWT on every route except `GET /health` — before the
+  Lambda is invoked.
 
 ## Commands
 
 ```bash
 npm install
-npm run dev      # run the Fastify API locally on :3000 (GET /health)
+npm run dev      # run the Fastify API locally on :3000 (GET /health); no API Gateway
+                 # locally, so every request runs as the fixed identity `local-dev`
 npm run build    # typecheck (tsc --noEmit)
 npm run lint     # ESLint with type-aware rules (eslint.config.mjs)
 npm test         # full test suite (vitest) — see Testing below
@@ -104,11 +111,12 @@ coffeegrinder-backend/
 │   └── workflows/
 │       └── ci.yml                # GitHub Actions: typecheck + full test suite on every push
 ├── bin/
-│   └── app.ts                    # where the CDK app starts: creates the two stacks, tags everything
+│   └── app.ts                    # where the CDK app starts: creates the stacks, tags everything
 ├── lib/                          # infrastructure code — defines what gets deployed to AWS
 │   ├── config.ts                 # reads settings (env name, model id, ...) from cdk.json into one typed object
 │   ├── data-stack.ts             # the stack that stores data: DynamoDB table + S3 bucket for resumes
-│   ├── api-stack.ts              # the stack that runs code: HTTP API, all the Lambdas, their permissions
+│   ├── auth-stack.ts             # the stack that owns accounts: Cognito user pool, hosted UI, SPA client
+│   ├── api-stack.ts              # the stack that runs code: HTTP API (JWT-authorized), all the Lambdas, their permissions
 │   ├── *.test.ts                 # tests that check the generated CloudFormation (see Testing)
 │   └── constructs/               # reusable building blocks the stacks are made of
 │       ├── single-table.ts       #   the DynamoDB table definition

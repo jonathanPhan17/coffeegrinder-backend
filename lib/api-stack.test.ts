@@ -1,5 +1,6 @@
 import { App, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
+import { UserPool, UserPoolClient } from 'aws-cdk-lib/aws-cognito';
 import { AttributeType, TableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { describe, expect, it } from 'vitest';
@@ -15,6 +16,7 @@ const makeConfig = (bedrockModelId: string, bedrockFastModelId: string): EnvConf
   envName: 'dev',
   isProd: false,
   allowedOrigins: ['http://localhost:5173'],
+  siteOrigins: ['https://coffeegrinder.app', 'https://www.coffeegrinder.app'],
   bedrockModelId,
   bedrockFastModelId,
   apifyTokenParam: '/coffeegrinder/apify-token',
@@ -32,11 +34,15 @@ function synthApi(bedrockModelId: string, bedrockFastModelId = ''): Template {
     sortKey: { name: 'SK', type: AttributeType.STRING },
   });
   const bucket = new Bucket(support, 'Bucket');
+  const userPool = new UserPool(support, 'Pool');
+  const userPoolClient = new UserPoolClient(support, 'PoolClient', { userPool });
   const stack = new ApiStack(app, 'Api', {
     env: ENV,
     config: makeConfig(bedrockModelId, bedrockFastModelId),
     table,
     bucket,
+    userPool,
+    userPoolClient,
   });
   return Template.fromStack(stack);
 }
@@ -187,6 +193,34 @@ describe('ApiStack IAM posture', () => {
         'arn:aws:bedrock:us-west-1::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0',
       ]);
     }
+  });
+});
+
+describe('ApiStack auth posture', () => {
+  it('locks the $default catch-all route behind the JWT authorizer', () => {
+    // The lith serves everything through $default — if this route lost its authorizer,
+    // the whole API would be public again.
+    template.hasResourceProperties(
+      'AWS::ApiGatewayV2::Route',
+      Match.objectLike({ RouteKey: '$default', AuthorizationType: 'JWT' }),
+    );
+  });
+
+  it('leaves GET /health open for probes', () => {
+    template.hasResourceProperties(
+      'AWS::ApiGatewayV2::Route',
+      Match.objectLike({ RouteKey: 'GET /health', AuthorizationType: 'NONE' }),
+    );
+  });
+
+  it('leaves CORS preflights unauthenticated', () => {
+    // Browsers send preflight OPTIONS without Authorization; without this carve-out the
+    // JWT-locked $default route would 401 them at the gateway and every cross-origin
+    // call from the site would die before reaching the Lambda.
+    template.hasResourceProperties(
+      'AWS::ApiGatewayV2::Route',
+      Match.objectLike({ RouteKey: 'OPTIONS /{proxy+}', AuthorizationType: 'NONE' }),
+    );
   });
 });
 

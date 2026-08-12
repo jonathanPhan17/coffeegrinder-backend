@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { getProfile, putPendingProfile } from '../data/resume-profile';
 import {
-  DEFAULT_USER_ID,
   MAX_RESUME_SIZE_BYTES,
   RESUME_CONTENT_TYPE,
   UPLOAD_URL_TTL_SECONDS,
@@ -36,9 +35,9 @@ export async function resumeRoutes(app: FastifyInstance): Promise<void> {
         .send({ error: `Resume must be ${MAX_RESUME_SIZE_BYTES / 1024 / 1024} MB or smaller` });
     }
 
-    const key = `resumes/${DEFAULT_USER_ID}/${randomUUID()}.pdf`;
+    const key = `resumes/${request.userId}/${randomUUID()}.pdf`;
     const uploadUrl = await presignUpload(key, contentType, sizeBytes, UPLOAD_URL_TTL_SECONDS);
-    await putPendingProfile(DEFAULT_USER_ID, {
+    await putPendingProfile(request.userId, {
       fileName,
       sizeKb: Math.max(1, Math.round(sizeBytes / 1024)),
       s3Key: key,
@@ -48,8 +47,8 @@ export async function resumeRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // GET /resume — the current profile; frontend polls this until parsed=true.
-  app.get('/resume', async (_request, reply) => {
-    const profile = await getProfile(DEFAULT_USER_ID);
+  app.get('/resume', async (request, reply) => {
+    const profile = await getProfile(request.userId);
     if (!profile) return reply.code(404).send({ error: 'No resume uploaded yet' });
     return profile;
   });

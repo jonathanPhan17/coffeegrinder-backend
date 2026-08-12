@@ -9,15 +9,23 @@ Build out the disabled "Paste · soon" control in `RunSetupForm.tsx` to send `po
 `POST /runs` — the backend already accepts pasted postings (schema + `PastedSource` are live;
 curl-tested). Purely a frontend form slice behind the existing seam.
 
-## Unauthenticated public API — accepted posture
+## Google sign-in IdP — blocked on Google OAuth client credentials
 
-The live site (coffeegrinder.app) necessarily publishes the API URL in its JS bundle, and
-the API has no auth: anyone with the URL can start runs (Apify + Bedrock spend on our
-account, bounded per run by the count cap) and read match data (which embeds resume
-evidence snippets). Accepted deliberately while the app is a personal tool with an
-unpromoted URL; mitigated by a monthly AWS Budgets alarm (account-level, created via CLI,
-outside CDK). The real fix is the Cognito slice already gated on the external-user
-milestone — pull it forward before promoting the site anywhere public.
+Email+password signup is live; Google sign-in needs a Google OAuth client (id + secret)
+first. Once credentials exist: add a `UserPoolIdentityProviderGoogle` to `AuthStack`
+(scopes openid/email/profile, attribute mapping email → email) and list it in the SPA
+client's `supportedIdentityProviders` (unset today, meaning Cognito-only). The frontend
+needs zero changes — the hosted UI grows a "Continue with Google" button on its own.
+
+## Per-user run quotas + global daily spend cap (P1)
+
+With signup open to anyone, the per-run count cap (≤ 5) no longer bounds total spend —
+one account can loop runs, and N accounts multiply it. Agreed numbers: a free tier of
+**5 runs/month per account** plus a **~25 runs/day global cap** as the blast-radius
+backstop. Both enforced server-side in `POST /runs` before the SFN kickoff (reject
+over-quota with a clear error): a counter on the user item + a global daily counter item.
+The monthly AWS Budgets alarm (account-level, created via CLI, outside CDK) stays as the
+last-resort tripwire.
 
 ## parseFailed handling
 
@@ -106,17 +114,17 @@ this is low-risk, but **serving scraped job data to third-party users raises ToS
 (Apify owns the proxy/anti-bot layer, yet redistribution is a different question than personal
 scraping). If Coffeegrinder gets real external-user traction, make it a conscious decision to
 move to official job-board APIs / partnerships rather than scraped data. Gate this on the same
-external-user milestone as Cognito + quotas. Noting now so it is deliberate later, not a
-surprise.
+external-user milestone as the run-quotas entry above. Noting now so it is deliberate later,
+not a surprise.
 
 ## Cross-run dedup / caching of fetched postings
 
 Deferred from the Apify slice. `sourceId` is Indeed's stable job id (not a random UUID), so the
 groundwork for dedup is in place: the same posting fetched in two runs shares an id. At
 multi-user scale, caching identical-query results for a short window avoids paying Apify twice
-for the same search. Keep deferred until there is more than one user — tie it to the same
-Cognito + quotas external-user gate as the API-graduation item above. Not worth building for a
-single-user app.
+for the same search. Keep deferred until there is real multi-user traffic — tie it to the same
+external-user gate (run quotas) as the API-graduation item above. Not worth building while
+one person uses the app.
 
 ## cdk-nag security linting pass
 
@@ -128,7 +136,7 @@ decision. Ungated; pick up whenever a security-posture pass is wanted.
 ## Deployment pipeline + integration/deploy-time testing (conscious workflow change)
 
 From the same review, three related maturity items, all gated on the external-user/prod
-milestone (same gate as Cognito + quotas). Test-only CI (typecheck + vitest on every push,
+milestone (same gate as run quotas). Test-only CI (typecheck + vitest on every push,
 zero AWS access) shipped 2026-07-11 as `.github/workflows/ci.yml` — what remains here is
 the deployment half only:
 

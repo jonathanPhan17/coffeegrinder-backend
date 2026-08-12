@@ -2,7 +2,7 @@ import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { buildApp } from '../app';
+import { buildTestApp } from '../test-support/app';
 
 const ddbMock = mockClient(DynamoDBDocumentClient);
 const sfnMock = mockClient(SFNClient);
@@ -34,7 +34,7 @@ describe('POST /runs', () => {
   });
 
   it('stores every pasted posting and reports count = postings stored', async () => {
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({
       method: 'POST',
       url: '/runs',
@@ -51,7 +51,7 @@ describe('POST /runs', () => {
   });
 
   it('caps stored postings at count and overrides run.count to the cap', async () => {
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({
       method: 'POST',
       url: '/runs',
@@ -64,7 +64,7 @@ describe('POST /runs', () => {
   });
 
   it('takes the Apify path for a query-only run: no postingIds, sends query + limit', async () => {
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({
       method: 'POST',
       url: '/runs',
@@ -81,7 +81,7 @@ describe('POST /runs', () => {
   });
 
   it('rejects a count over the spend cap', async () => {
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({
       method: 'POST',
       url: '/runs',
@@ -94,7 +94,7 @@ describe('POST /runs', () => {
   });
 
   it('rejects a pasted-postings array over the spend cap', async () => {
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({
       method: 'POST',
       url: '/runs',
@@ -107,7 +107,7 @@ describe('POST /runs', () => {
   });
 
   it('rejects an empty postings array', async () => {
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({
       method: 'POST',
       url: '/runs',
@@ -119,7 +119,7 @@ describe('POST /runs', () => {
   });
 
   it('rejects a posting whose applyUrl is not a url', async () => {
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({
       method: 'POST',
       url: '/runs',
@@ -132,7 +132,7 @@ describe('POST /runs', () => {
 
   it('marks the stored run as error when the state machine kickoff fails', async () => {
     sfnMock.on(StartExecutionCommand).rejects(new Error('sfn unavailable'));
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({
       method: 'POST',
       url: '/runs',

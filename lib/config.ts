@@ -6,6 +6,12 @@ export interface EnvConfig {
   /** Origins allowed to call the API / upload to S3 (CORS). */
   allowedOrigins: string[];
   /**
+   * The public site origins (apex + www) — used for the S3/API CORS pieces and the
+   * Cognito callback URLs. NOT the same as allowedOrigins, which is deliberately
+   * empty in prod.
+   */
+  siteOrigins: string[];
+  /**
    * Bedrock model / inference-profile id for LLM calls; override with `-c bedrockModelId=…`
    * (the BEDROCK_MODEL_ID env var is read only when no context entry exists, and cdk.json
    * sets one — so under `cdk deploy` the env var is dead).
@@ -57,6 +63,7 @@ export function loadConfig(app: App): EnvConfig {
     envName,
     isProd,
     allowedOrigins: isProd ? [] : [...DEV_ORIGINS, ...siteOrigins],
+    siteOrigins,
     bedrockModelId,
     bedrockFastModelId,
     apifyTokenParam:

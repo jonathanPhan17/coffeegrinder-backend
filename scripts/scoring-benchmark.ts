@@ -31,7 +31,6 @@ import { PostingCriteriaSchema } from '../src/ai/posting-criteria';
 import { scoreMatch } from '../src/ai/score-match';
 import { getResumeText } from '../src/data/resume-profile';
 import { verifyEvidence } from '../src/matching/verify';
-import { DEFAULT_USER_ID } from '../src/shared/constants';
 import { ddb } from '../src/shared/dynamodb';
 import { TABLE_NAME } from '../src/shared/env';
 import { logger } from '../src/shared/logger';
@@ -135,7 +134,9 @@ function priceFor(modelId: string): Price | null {
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { limit: 12, out: '', user: DEFAULT_USER_ID, compare: null };
+  // 'me' is the pre-Cognito single-user id every historical run/profile was stored
+  // under — the data this benchmark reads. Post-auth data needs --user <sub>.
+  const args: Args = { limit: 12, out: '', user: 'me', compare: null };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === '--limit') args.limit = Number(argv[++i]);

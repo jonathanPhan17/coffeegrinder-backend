@@ -1,8 +1,8 @@
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildApp } from '../app';
 import { MAX_RESUME_SIZE_BYTES, UPLOAD_URL_TTL_SECONDS } from '../shared/constants';
+import { TEST_USER, buildTestApp } from '../test-support/app';
 import { presignUpload } from '../shared/s3';
 
 vi.mock('../shared/s3', () => ({
@@ -22,13 +22,13 @@ describe('POST /resume', () => {
   });
 
   it('mints a URL pinned to the validated size and records a pending profile', async () => {
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({ method: 'POST', url: '/resume', payload: body });
 
     expect(res.statusCode).toBe(201);
     const { uploadUrl, key } = res.json<{ uploadUrl: string; key: string }>();
     expect(uploadUrl).toBe('https://bucket.s3.example/signed-put');
-    expect(key).toMatch(/^resumes\/me\/[0-9a-f-]+\.pdf$/);
+    expect(key).toMatch(new RegExp(`^resumes/${TEST_USER}/[0-9a-f-]+\\.pdf$`));
     // The size the route validated is the size the URL signs — the cap can't be
     // sidestepped by declaring small and uploading big.
     expect(presignMock).toHaveBeenCalledWith(
@@ -45,7 +45,7 @@ describe('POST /resume', () => {
   });
 
   it('rejects a missing field', async () => {
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({
       method: 'POST',
       url: '/resume',
@@ -57,7 +57,7 @@ describe('POST /resume', () => {
   });
 
   it('rejects non-PDF content types', async () => {
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({
       method: 'POST',
       url: '/resume',
@@ -69,7 +69,7 @@ describe('POST /resume', () => {
   });
 
   it('rejects a fractional or non-positive sizeBytes', async () => {
-    const app = buildApp();
+    const app = buildTestApp();
     for (const sizeBytes of [0, -5, 1234.5]) {
       const res = await app.inject({ method: 'POST', url: '/resume', payload: { ...body, sizeBytes } });
       expect(res.statusCode).toBe(400);
@@ -78,7 +78,7 @@ describe('POST /resume', () => {
   });
 
   it('413s over the cap without presigning or touching the stored profile', async () => {
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({
       method: 'POST',
       url: '/resume',
@@ -98,7 +98,7 @@ describe('GET /resume', () => {
 
   it('404s before any upload', async () => {
     ddbMock.on(GetCommand).resolves({});
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({ method: 'GET', url: '/resume' });
 
     expect(res.statusCode).toBe(404);
@@ -108,7 +108,7 @@ describe('GET /resume', () => {
   it('returns the profile and never leaks rawText or s3Key', async () => {
     ddbMock.on(GetCommand).resolves({
       Item: {
-        PK: 'USER#me',
+        PK: `USER#${TEST_USER}`,
         SK: 'PROFILE',
         fileName: 'resume.pdf',
         sizeKb: 47,
@@ -119,10 +119,10 @@ describe('GET /resume', () => {
         education: 'BS.',
         skills: ['TypeScript'],
         rawText: 'full resume text',
-        s3Key: 'resumes/me/abc.pdf',
+        s3Key: `resumes/${TEST_USER}/abc.pdf`,
       },
     });
-    const app = buildApp();
+    const app = buildTestApp();
     const res = await app.inject({ method: 'GET', url: '/resume' });
 
     expect(res.statusCode).toBe(200);

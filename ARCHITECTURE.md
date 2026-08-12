@@ -41,7 +41,7 @@ instead of *many patients vs. one trial's criteria*, it is *one resume vs. many 
 | Lambda tooling     | Powertools for AWS Lambda (TS) — structured logs/tracing/metrics; Zod at LLM boundaries |
 | Testing            | Vitest + aws-sdk-client-mock; CDK assertions for infra invariants (retention, IAM posture, machine graph) |
 | Job ingestion      | **Apify** (managed scraping API) behind a swappable `JobSource`        |
-| Auth               | Amazon Cognito (added later)                                           |
+| Auth               | **Amazon Cognito** — user pool (open email+password signup, hosted UI, no-secret PKCE SPA client) in its own stateful `AuthStack`; an HTTP API JWT authorizer verifies every route at the gateway (carve-outs: `GET /health` and CORS preflight `OPTIONS`) |
 | Notifications      | EventBridge Scheduler + Gmail API (stretch / V3)                      |
 
 **No VPC anywhere.** DynamoDB, S3, Bedrock, Step Functions, and Apify are all reached
@@ -58,8 +58,9 @@ end-to-end *sequence* is narrated in §4.
 
 | Component | Tech | Invoked by | Calls / reads / writes |
 |-----------|------|-----------|------------------------|
-| **Frontend** | React + TS + Vite + Tailwind/shadcn on S3 + CloudFront (`coffeegrinder.app`) | The user | The API, over HTTPS / JSON |
-| **API** | API Gateway (HTTP API) → Lambda (TS, Fastify) | Frontend | Presigns S3 uploads · starts Step Functions runs · reads/writes DynamoDB |
+| **Frontend** | React + TS + Vite + Tailwind/shadcn on S3 + CloudFront (`coffeegrinder.app`) | The user | The API, over HTTPS / JSON, with a Cognito JWT on every request |
+| **Auth** | Amazon Cognito user pool + hosted UI + SPA client (no secret, PKCE) | Browser redirects for signup / login | Mints the JWTs the API's authorizer verifies; the token's `sub` is the per-request user id |
+| **API** | API Gateway (HTTP API, JWT authorizer) → Lambda (TS, Fastify) | Frontend | Presigns S3 uploads · starts Step Functions runs · reads/writes DynamoDB |
 | **Resume bucket** | S3 | API (presigned `PUT`) | Emits `ObjectCreated` → EventBridge |
 | **Parse worker** | Lambda (`pdf-parse`) | EventBridge S3 object-created, `resumes/` prefix | Reads the S3 object · writes extracted text to the profile (DynamoDB) |
 | **Matching pipeline** | Step Functions — Fetch → inline Map → Persist (§9.5) | `POST /runs`, via the API | Fetches from Apify · per posting: Score (Bedrock) + Verify (in code) · writes scored matches to DynamoDB |
@@ -76,7 +77,13 @@ VPC endpoints (see §2).*
 
 ## 4. End-to-end flow
 
-1. **Upload** — User uploads a resume PDF via a presigned URL to **S3**. The route rejects
+1. **Sign in** — The browser signs up / logs in via the **Cognito hosted UI** (email +
+   password, open signup) and attaches the Cognito-minted JWT to every API request. The
+   HTTP API's **JWT authorizer** validates it at the gateway — unauthenticated junk dies
+   there without ever invoking (or billing) a Lambda — and the lith reads the token's
+   `sub` claim as the per-request `userId`. Only `GET /health` and CORS preflight
+   `OPTIONS` requests skip this.
+2. **Upload** — User uploads a resume PDF via a presigned URL to **S3**. The route rejects
    non-PDF types (415) and anything over **10 MB** (413), and the presigned URL signs
    `content-type` and `content-length`, so S3 itself refuses a body whose type or size
    differs from what was validated — the cap holds even against a client that skips the
@@ -89,22 +96,22 @@ VPC endpoints (see §2).*
    *(EventBridge — not a direct S3 bucket notification — because the bucket lives in the
    stateful stack and the worker in the stateless one; a bucket notification would reference
    the Lambda ARN from the bucket's stack and create a circular stack dependency.)*
-2. **Run** — User picks **N** (e.g. "match me against 20 jobs") + search terms and hits Go.
+3. **Run** — User picks **N** (e.g. "match me against 20 jobs") + search terms and hits Go.
    `POST /runs` starts a **Step Functions** execution and returns a `runId`. The frontend
    polls `GET /runs/{id}` for status.
-3. **Fetch** — When the run has no pasted postings, the state machine starts an **Apify**
+4. **Fetch** — When the run has no pasted postings, the state machine starts an **Apify**
    actor run and **polls it to completion** (StartActorRun → Wait → GetActorStatus → a
    Choice that loops until the run succeeds, fails, or an attempts guard trips), then
    collects the dataset, normalizes it into the standard posting shape (§6), and writes the
    posting rows. (Poll loop, not a webhook — the run stays inside one Step Functions
    execution with no public callback endpoint to expose; see §9.7.)
-4. **Match (fan-out)** — An **inline Map** (`maxConcurrency: 5`) runs the scorecard
+5. **Match (fan-out)** — An **inline Map** (`maxConcurrency: 5`) runs the scorecard
    evaluation (§5) on all N postings in parallel with a capped concurrency (§9.5).
-5. **Results** — Scored matches are written to DynamoDB; the UI lists them **sorted, best
+6. **Results** — Scored matches are written to DynamoDB; the UI lists them **sorted, best
    first**, each with a **% score** and an expandable **scorecard**.
-6. **Act** — Per result: **Apply** (deep-links to the original posting URL) and
+7. **Act** — Per result: **Apply** (deep-links to the original posting URL) and
    **Draft cover letter** (Bedrock generates one tailored to that posting, versioned in DynamoDB).
-7. **Track** — A **pipeline board** moves each match through statuses
+8. **Track** — A **pipeline board** moves each match through statuses
    (matched -> shortlisted -> applied -> interviewing -> offer/rejected).
    *(V3: Gmail polling auto-advances "applied -> heard back".)*
 
@@ -138,8 +145,9 @@ Sonnet 4.5's verified verdict mix within 4 of 121 criteria, zero validation retr
 its fabricated quotes (mean 0.04) were all caught by the deterministic verifier — at
 ~2.6x lower cost and half the latency — so the standard tier now also runs Haiku 4.5.
 The two-tier seam stays in place for the next swap. Every call logs token usage + model id —
-success `tokens` entries plus per-attempt failure warns; a per-user spend meter (when
-accounts land) must sum both, because retried attempts bill too.
+success `tokens` entries plus per-attempt failure warns; a per-user spend meter
+(accounts exist now; the meter itself is the run-quotas BACKLOG item) must sum both,
+because retried attempts bill too.
 
 Output per match: an **overall score (%)**, a **verdict**, and a list of **per-criterion
 evidence** rows (criterion, met/partial/not_met, verified evidence quote, reasoning) —
@@ -243,6 +251,10 @@ Implementations:
 | `PATCH /matches/{id}`   | Update pipeline status                             |
 | `POST /coverletter`     | Generate/save a tailored cover letter for a match  |
 
+Every route except `GET /health` (and CORS preflight `OPTIONS`) requires a Cognito-minted JWT (`Authorization: Bearer …`),
+verified by the HTTP API's user-pool authorizer before the Lambda is invoked; the token's
+`sub` claim is the `userId` every read and write is scoped to.
+
 ---
 
 ## 9. Build phases
@@ -283,6 +295,23 @@ Implementations:
 **V3 — the wow (build last):**
 10. Gmail follow-up monitoring + notifications (EventBridge + Gmail API).
 11. Cognito multi-user auth.
+    *Pulled forward and shipped ahead of promoting the site. An `AuthStack` user pool
+    (open email+password signup, hosted UI, no-secret PKCE SPA client) feeds an
+    `HttpUserPoolAuthorizer` set as the HTTP API's **default authorizer** — junk dies at
+    the gateway without invoking (or billing) the lith; the exempt routes are `GET /health`
+    (probes) and `OPTIONS /{proxy+}` (CORS preflights carry no Authorization header, and
+    without the carve-out the JWT-locked `$default` would 401 them at the gateway and
+    block every cross-origin call from the site — the documented HTTP API
+    $default-plus-authorizer gotcha). Access-token validation (the aud-or-client_id check) is the JWT
+    authorizer's job, not app code. In the app, identity is a **seam**:
+    `buildApp({ identityExtractor })` — tests inject a fixed id, `local.ts` runs as
+    `local-dev`, and production omits the option, so the only identity path is the
+    gateway-verified JWT's `sub` read from the adapter-decorated Lambda event; no header
+    is ever consulted, so nothing is spoofable. Threading the real `sub` also closed the
+    one cross-tenant hole: `GET /matches?run=` now checks run ownership
+    (`getRun(userId, runId)`, 404 otherwise) before the RUN#-keyed match query, because
+    postings/matches are not user-keyed. Google sign-in is deferred pending OAuth client
+    credentials (BACKLOG).*
 
 ---
 

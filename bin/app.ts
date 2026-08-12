@@ -2,6 +2,7 @@
 import { App, Tags } from 'aws-cdk-lib';
 import { loadConfig } from '../lib/config';
 import { DataStack } from '../lib/data-stack';
+import { AuthStack } from '../lib/auth-stack';
 import { ApiStack } from '../lib/api-stack';
 import { DnsStack } from '../lib/dns-stack';
 import { FrontendCertStack } from '../lib/frontend-cert-stack';
@@ -24,11 +25,16 @@ Tags.of(app).add('ManagedBy', 'cdk');
 const data = new DataStack(app, `Coffeegrinder-Data-${config.envName}`, { config, env });
 Tags.of(data).add('Component', 'data');
 
+const auth = new AuthStack(app, `Coffeegrinder-Auth-${config.envName}`, { config, env });
+Tags.of(auth).add('Component', 'auth');
+
 const api = new ApiStack(app, `Coffeegrinder-Api-${config.envName}`, {
   config,
   env,
   table: data.table,
   bucket: data.bucket,
+  userPool: auth.userPool,
+  userPoolClient: auth.userPoolClient,
 });
 Tags.of(api).add('Component', 'api');
 
