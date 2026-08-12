@@ -131,7 +131,7 @@ coffeegrinder-backend/
 │   ├── ai/                       # every call to the LLM (Bedrock) lives here
 │   ├── matching/                 # the scoring rules: verify evidence quotes, compute the score
 │   ├── sources/                  # where job postings come from (pasted text, or Apify scraping)
-│   ├── data/                     # reading and writing DynamoDB items (profile, run, match)
+│   ├── data/                     # reading and writing DynamoDB items (profile, run, match, quota)
 │   ├── shared/                   # small helpers used everywhere: AWS clients, env vars, key builders
 │   └── types/                    # the TypeScript types shared with the frontend API
 ├── scripts/

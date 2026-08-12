@@ -97,8 +97,11 @@ VPC endpoints (see §2).*
    stateful stack and the worker in the stateless one; a bucket notification would reference
    the Lambda ARN from the bucket's stack and create a circular stack dependency.)*
 3. **Run** — User picks **N** (e.g. "match me against 20 jobs") + search terms and hits Go.
-   `POST /runs` starts a **Step Functions** execution and returns a `runId`. The frontend
-   polls `GET /runs/{id}` for status.
+   `POST /runs` first consumes a run-quota slot (5 runs/month per account plus a 25
+   runs/day site-wide backstop, both counters bumped in one conditional DynamoDB
+   transaction; see 9.12) and rejects an over-quota request with a 429 **before anything
+   is persisted or charged**. Within quota, it starts a **Step Functions** execution and
+   returns a `runId`. The frontend polls `GET /runs/{id}` for status.
 4. **Fetch** — When the run has no pasted postings, the state machine starts an **Apify**
    actor run and **polls it to completion** (StartActorRun → Wait → GetActorStatus → a
    Choice that loops until the run succeeds, fails, or an attempts guard trips), then
@@ -145,8 +148,9 @@ Sonnet 4.5's verified verdict mix within 4 of 121 criteria, zero validation retr
 its fabricated quotes (mean 0.04) were all caught by the deterministic verifier — at
 ~2.6x lower cost and half the latency — so the standard tier now also runs Haiku 4.5.
 The two-tier seam stays in place for the next swap. Every call logs token usage + model id —
-success `tokens` entries plus per-attempt failure warns; a per-user spend meter
-(accounts exist now; the meter itself is the run-quotas BACKLOG item) must sum both,
+success `tokens` entries plus per-attempt failure warns. Run-count quotas (see 9.12) bound
+how many runs an account can start, but they are not a token spend meter -- a true
+per-user spend meter remains future work, and must sum success and failure entries both,
 because retried attempts bill too.
 
 Output per match: an **overall score (%)**, a **verdict**, and a list of **per-criterion
@@ -220,10 +224,15 @@ Implementations:
 | Match (scored)      | `RUN#<runId>`   | `MATCH#<postingId>` | embeds `evidence[]`; GSI1: `USER#<id>` / `STATUS#<status>` (board + id lookup); score for sort |
 | Match evidence      | *(embedded)*    | —                   | lives on the Match item as `evidence[]` (one query for `GET /matches?run=`); split to `MATCH#<id>` / `EVIDENCE#<crit>` rows only if it outgrows the 400 KB item |
 | Cover letter        | `MATCH#<id>`    | `LETTER#<version>`  | versioned drafts                               |
+| Quota counter (user monthly) | `USER#<id>` | `QUOTA#<yyyy-mm>` | `used` = runs consumed this UTC month (see 9.12); period lives in the key, so no TTL/reset job |
+| Quota counter (global daily) | `QUOTA#GLOBAL` | `DAY#<yyyy-mm-dd>` | `used` = runs consumed site-wide this UTC day |
 
 **Access patterns (all covered without joins):**
 - Get a user's profile -> key lookup.
 - Get a run + its status -> key lookup.
+- Consume a run slot -> one TransactWriteItems bumping both quota counters with a
+  `used < limit` condition each (release = best-effort conditional decrement).
+- Remaining quota (`GET /quota`) -> two key lookups.
 - List a run's postings / matches -> item-collection query.
 - Results sorted by score -> fetch run's matches and sort in Lambda (N is small), or encode
   score into a GSI sort key.
@@ -244,8 +253,9 @@ Implementations:
 | Method & route          | Purpose                                            |
 |-------------------------|----------------------------------------------------|
 | `POST /resume`          | Get presigned upload URL (PDF, ≤ 10 MB) / register a resume |
-| `POST /runs`            | Start a screening run (N, query) -> `runId`        |
+| `POST /runs`            | Start a screening run (N, query) -> `runId`; 429 `{ error, code: monthly_quota \| daily_cap, limit, resetsAt }` when over quota (see 9.12) |
 | `GET  /runs/{id}`       | Poll run status                                    |
+| `GET  /quota`           | Remaining run quota, both windows: `{ monthly, daily }`, each `{ used, limit, remaining, resetsAt }` |
 | `GET  /matches[?run=…]` | List scored matches (one run's, or without `run` all of the user's — the pipeline board) |
 | `GET  /matches/{id}`    | One match + its evidence scorecard                 |
 | `PATCH /matches/{id}`   | Update pipeline status                             |
@@ -312,6 +322,25 @@ verified by the HTTP API's user-pool authorizer before the Lambda is invoked; th
     (`getRun(userId, runId)`, 404 otherwise) before the RUN#-keyed match query, because
     postings/matches are not user-keyed. Google sign-in is deferred pending OAuth client
     credentials (BACKLOG).*
+12. Run quotas (free tier).
+    *Shipped 2026-08, the external-user follow-through on open signup: **5 runs/month per
+    account** plus a **25 runs/day site-wide** blast-radius backstop, both enforced in
+    `POST /runs` before anything is persisted or charged. One DynamoDB TransactWriteItems
+    (the repo's first) bumps both period counters (`USER#<id>/QUOTA#<yyyy-mm>`,
+    `QUOTA#GLOBAL/DAY#<yyyy-mm-dd>`, see the section 7 table) with a `used < limit`
+    condition each -- atomic increment-and-check, so a tripped second guard never leaves
+    the first counter consumed and no compensation logic is needed on the reject path.
+    Any post-consume failure (pasted-posting write, run write, SFN kickoff) releases the
+    slot best-effort (conditional `ADD used -1`, floored at zero) so a failed kickoff
+    cannot burn a free run. Period-encoded keys mean no TTL and no reset job: a new
+    month/day starts a fresh item, and stale counters (~13 tiny rows per user per year)
+    are accepted. `GET /quota` exposes both windows (`used`/`limit`/`remaining`/`resetsAt`)
+    for the frontend meter, and the 429 body carries a machine-readable `code`
+    (`monthly_quota` / `daily_cap`) -- a deliberate addition to the house `{ error }`
+    shape, because two 429 variants need discrimination. Limits are constants in
+    `src/shared/constants.ts` (not env-plumbed -- zero CDK diff). Quotas count runs, not
+    tokens (see the section 5 spend-meter note). The monthly AWS Budgets alarm
+    (account-level, created via CLI, outside CDK) stays as the last-resort tripwire.*
 
 ---
 
@@ -323,7 +352,8 @@ Everything scales to zero except what you explicitly run:
   across the fan-out) keeps a full N=20 run in the cents, and the extraction-class calls
   (criteria, resume structuring) run on the cheaper fast tier (§5). Apify dominates real
   spend, not Bedrock.
-- Apify -> usage-based; the "pick N" cap throttles spend.
+- Apify -> usage-based; the "pick N" cap throttles per-run spend, and the run quotas
+  (see 9.12) bound volume -- worst case ~25 paid runs/day site-wide.
 - Domain -> ~$18/yr renewal at the registrar + $0.50/mo for the Route 53 zone; ACM cert
   free; CloudFront/S3 pennies at this traffic.
 - No NAT gateway, no always-on RDS, no VPC endpoints.

@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { healthRoutes } from './routes/health';
 import { matchesRoutes } from './routes/matches';
+import { quotaRoutes } from './routes/quota';
 import { resumeRoutes } from './routes/resume';
 import { runsRoutes } from './routes/runs';
 import { lambdaJwtIdentity } from './shared/auth';
@@ -38,5 +39,6 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(resumeRoutes);
   app.register(runsRoutes);
   app.register(matchesRoutes);
+  app.register(quotaRoutes);
   return app;
 }

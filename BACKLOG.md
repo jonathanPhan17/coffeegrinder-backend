@@ -17,16 +17,6 @@ first. Once credentials exist: add a `UserPoolIdentityProviderGoogle` to `AuthSt
 client's `supportedIdentityProviders` (unset today, meaning Cognito-only). The frontend
 needs zero changes — the hosted UI grows a "Continue with Google" button on its own.
 
-## Per-user run quotas + global daily spend cap (P1)
-
-With signup open to anyone, the per-run count cap (≤ 5) no longer bounds total spend —
-one account can loop runs, and N accounts multiply it. Agreed numbers: a free tier of
-**5 runs/month per account** plus a **~25 runs/day global cap** as the blast-radius
-backstop. Both enforced server-side in `POST /runs` before the SFN kickoff (reject
-over-quota with a clear error): a counter on the user item + a global daily counter item.
-The monthly AWS Budgets alarm (account-level, created via CLI, outside CDK) stays as the
-last-resort tripwire.
-
 ## parseFailed handling
 
 `ParseResume` worker throws on parse failure but there's no `parseFailed` state
@@ -113,9 +103,9 @@ surprise. A real fix would need an idempotency/outbox layer, which is overkill a
 this is low-risk, but **serving scraped job data to third-party users raises ToS exposure**
 (Apify owns the proxy/anti-bot layer, yet redistribution is a different question than personal
 scraping). If Coffeegrinder gets real external-user traction, make it a conscious decision to
-move to official job-board APIs / partnerships rather than scraped data. Gate this on the same
-external-user milestone as the run-quotas entry above. Noting now so it is deliberate later,
-not a surprise.
+move to official job-board APIs / partnerships rather than scraped data. Gate this on the
+external-user milestone (whose first slice, run quotas, shipped 2026-08 -- ARCHITECTURE 9.12).
+Noting now so it is deliberate later, not a surprise.
 
 ## Cross-run dedup / caching of fetched postings
 
@@ -123,8 +113,8 @@ Deferred from the Apify slice. `sourceId` is Indeed's stable job id (not a rando
 groundwork for dedup is in place: the same posting fetched in two runs shares an id. At
 multi-user scale, caching identical-query results for a short window avoids paying Apify twice
 for the same search. Keep deferred until there is real multi-user traffic — tie it to the same
-external-user gate (run quotas) as the API-graduation item above. Not worth building while
-one person uses the app.
+external-user milestone as the API-graduation item above (run quotas, its first slice, shipped
+2026-08). Not worth building while one person uses the app.
 
 ## cdk-nag security linting pass
 
@@ -136,7 +126,7 @@ decision. Ungated; pick up whenever a security-posture pass is wanted.
 ## Deployment pipeline + integration/deploy-time testing (conscious workflow change)
 
 From the same review, three related maturity items, all gated on the external-user/prod
-milestone (same gate as run quotas). Test-only CI (typecheck + vitest on every push,
+milestone (whose first slice, run quotas, shipped 2026-08). Test-only CI (typecheck + vitest on every push,
 zero AWS access) shipped 2026-07-11 as `.github/workflows/ci.yml` — what remains here is
 the deployment half only:
 

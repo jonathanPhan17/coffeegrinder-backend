@@ -1,5 +1,11 @@
+import { TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import {
+  DynamoDBDocumentClient,
+  PutCommand,
+  TransactWriteCommand,
+  UpdateCommand,
+} from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildTestApp } from '../test-support/app';
@@ -27,6 +33,10 @@ describe('POST /runs', () => {
     ddbMock.reset();
     sfnMock.reset();
     ddbMock.on(PutCommand).resolves({});
+    // The quota gate's transact (and releaseQuota's updates) must succeed by default,
+    // or every POST here would 500 before reaching the code under test.
+    ddbMock.on(TransactWriteCommand).resolves({});
+    ddbMock.on(UpdateCommand).resolves({});
     sfnMock.on(StartExecutionCommand).resolves({
       executionArn: 'arn:aws:states:us-east-1:0:execution/test',
       startDate: new Date(0),
@@ -47,6 +57,8 @@ describe('POST /runs', () => {
     expect(body.count).toBe(2); // …so run.count is overridden to what was actually stored.
     expect(body.screened).toBe(0);
     expect(startedPayload().postingIds).toHaveLength(2);
+    // The quota gate consumed exactly one slot for the whole run.
+    expect(ddbMock.commandCalls(TransactWriteCommand)).toHaveLength(1);
     await app.close();
   });
 
@@ -130,7 +142,7 @@ describe('POST /runs', () => {
     await app.close();
   });
 
-  it('marks the stored run as error when the state machine kickoff fails', async () => {
+  it('marks the stored run as error and releases the quota slot when the kickoff fails', async () => {
     sfnMock.on(StartExecutionCommand).rejects(new Error('sfn unavailable'));
     const app = buildTestApp();
     const res = await app.inject({
@@ -144,6 +156,83 @@ describe('POST /runs', () => {
       .commandCalls(PutCommand)
       .map((call) => (call.args[0].input.Item as Record<string, unknown>).status);
     expect(statuses).toEqual(['queued', 'error']);
+    // A run that never started must not burn a slot: both counters got ADD -1 back.
+    const decrements = ddbMock
+      .commandCalls(UpdateCommand)
+      .filter((call) => call.args[0].input.ExpressionAttributeValues?.[':minusOne'] === -1);
+    expect(decrements).toHaveLength(2);
+    await app.close();
+  });
+
+  it('429s with monthly_quota before anything persists when the monthly limit is hit', async () => {
+    ddbMock.on(TransactWriteCommand).rejects(
+      new TransactionCanceledException({
+        message: 'quota exhausted',
+        $metadata: {},
+        CancellationReasons: [{ Code: 'ConditionalCheckFailed' }, { Code: 'None' }],
+      }),
+    );
+    const app = buildTestApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/runs',
+      payload: { query: 'backend', count: 5, postings: [posting] },
+    });
+
+    expect(res.statusCode).toBe(429);
+    const body = res.json<{ code: string; limit: number; resetsAt: string }>();
+    expect(body.code).toBe('monthly_quota');
+    expect(body.limit).toBe(5);
+    expect(body.resetsAt).toMatch(/T00:00:00\.000Z$/);
+    // Rejected over-quota means zero rows written and zero spend kicked off.
+    expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+    expect(sfnMock.commandCalls(StartExecutionCommand)).toHaveLength(0);
+    await app.close();
+  });
+
+  it('500s (not 429) when the transact cancels without any condition failure', async () => {
+    // A TransactionConflict on the shared daily item consumes nothing -- misreading it
+    // as a cap would tell a healthy user to come back tomorrow.
+    ddbMock.on(TransactWriteCommand).rejects(
+      new TransactionCanceledException({
+        message: 'conflict',
+        $metadata: {},
+        CancellationReasons: [{ Code: 'None' }, { Code: 'TransactionConflict' }],
+      }),
+    );
+    const app = buildTestApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/runs',
+      payload: { query: 'backend', count: 5 },
+    });
+
+    expect(res.statusCode).toBe(500);
+    expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+    expect(sfnMock.commandCalls(StartExecutionCommand)).toHaveLength(0);
+    await app.close();
+  });
+
+  it('429s with daily_cap when the global daily cap is the one that trips', async () => {
+    ddbMock.on(TransactWriteCommand).rejects(
+      new TransactionCanceledException({
+        message: 'quota exhausted',
+        $metadata: {},
+        CancellationReasons: [{ Code: 'None' }, { Code: 'ConditionalCheckFailed' }],
+      }),
+    );
+    const app = buildTestApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/runs',
+      payload: { query: 'backend', count: 5 },
+    });
+
+    expect(res.statusCode).toBe(429);
+    const body = res.json<{ code: string; limit: number }>();
+    expect(body.code).toBe('daily_cap');
+    expect(body.limit).toBe(25);
+    expect(sfnMock.commandCalls(StartExecutionCommand)).toHaveLength(0);
     await app.close();
   });
 });

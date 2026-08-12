@@ -42,6 +42,30 @@ export interface Run {
   createdAt: string;
 }
 
+/* -- Run quotas (section 8: GET /quota) ------------------------------- */
+
+export interface QuotaWindow {
+  used: number;
+  limit: number;
+  /** max(0, limit - used) -- precomputed so the frontend never derives it. */
+  remaining: number;
+  /** ISO timestamp of the next UTC month start (monthly) / next UTC midnight (daily). */
+  resetsAt: string;
+}
+
+export interface Quota {
+  monthly: QuotaWindow;
+  daily: QuotaWindow;
+}
+
+/** Body of the 429 that POST /runs returns when a run quota is exhausted. */
+export interface QuotaExceededBody {
+  error: string;
+  code: 'monthly_quota' | 'daily_cap';
+  limit: number;
+  resetsAt: string;
+}
+
 /* ── Matches & scorecards (§5) ───────────────────────────────────────── */
 
 export type Verdict = 'met' | 'partial' | 'not_met';

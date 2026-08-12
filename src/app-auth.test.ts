@@ -1,5 +1,5 @@
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from './app';
@@ -35,6 +35,8 @@ describe('identity seam', () => {
 
   it('threads the caller identity into the state-machine payload', async () => {
     ddbMock.on(PutCommand).resolves({});
+    // POST /runs consumes quota before anything else -- the transact must succeed here.
+    ddbMock.on(TransactWriteCommand).resolves({});
     sfnMock.on(StartExecutionCommand).resolves({
       executionArn: 'arn:aws:states:us-east-1:0:execution/test',
       startDate: new Date(0),

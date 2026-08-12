@@ -21,4 +21,16 @@ export const keys = {
     PK: `MATCH#${matchId}`,
     SK: `LETTER#${version}`,
   }),
+  /**
+   * Run-quota counters (period-encoded, `used: number` attribute). The period lives in
+   * the key -- `month` is `yyyy-mm`, `day` is `yyyy-mm-dd`, both UTC slices of an ISO
+   * timestamp -- so counters never need a reset job or TTL (the table has none): a new
+   * period simply starts a fresh item. Stale periods linger as ~13 tiny rows per user
+   * per year -- accepted.
+   */
+  quotaMonth: (userId: string, month: string) => ({
+    PK: `USER#${userId}`,
+    SK: `QUOTA#${month}`,
+  }),
+  quotaDay: (day: string) => ({ PK: 'QUOTA#GLOBAL', SK: `DAY#${day}` }),
 } as const;
